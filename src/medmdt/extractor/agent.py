@@ -17,6 +17,7 @@ from medmdt.extractor.schemas import (
 )
 from medmdt.extractor.parsers.pdf_parser import PaddleOCRClient
 from medmdt.extractor.parsers.image_parser import ImageParser
+from medmdt.extractor.parsers.dicom_parser import DicomParser
 from medmdt.extractor.ingestor import Ingestor, IngestReport
 from medmdt.knowledge.graph_store import GraphStore
 from medmdt.knowledge.vector_store import VectorStore
@@ -44,6 +45,7 @@ class ExtractionAgent:
         self._settings = settings
         self._llm = llm
         self._image_parser = ImageParser(llm=llm)
+        self._dicom_parser = DicomParser(image_parser=self._image_parser)
         self._ingestor = Ingestor(graph_store, vector_store, keyword_store, embed_fn)
         self._ocr_client = PaddleOCRClient(settings)
 
@@ -60,7 +62,7 @@ class ExtractionAgent:
         elif file_type == "image":
             return [self._process_image(file_path)]
         elif file_type == "dicom":
-            raise NotImplementedError("DICOM processing is planned for P4")
+            return [self._process_dicom(file_path)]
         else:
             raise ValueError(f"Unsupported file type: {file_path}")
 
@@ -111,6 +113,19 @@ class ExtractionAgent:
                     metadata={"modality": analysis.modality or "unknown"},
                 )
             ],
+        )
+        return self._ingestor.ingest(result)
+
+    def _process_dicom(self, file_path: str) -> IngestReport:
+        """Parse DICOM file and ingest metadata + image analysis."""
+        dicom_result = self._dicom_parser.parse(file_path)
+        result = self._extract_from_text(
+            text=dicom_result.raw_text,
+            source=SourceInfo(
+                file=file_path,
+                type="dicom",
+                page=None,
+            ),
         )
         return self._ingestor.ingest(result)
 

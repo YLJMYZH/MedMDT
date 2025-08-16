@@ -192,8 +192,8 @@ def test_detect_file_type_unknown_raises():
 
 
 @patch("medmdt.extractor.agent.PaddleOCRClient")
-def test_process_dicom_raises_not_implemented(mock_ocr_cls, settings, mock_deps):
-    """DICOM processing is not yet supported."""
+def test_process_dicom_delegates_to_dicom_parser(mock_ocr_cls, settings, mock_deps):
+    """DICOM processing delegates to DicomParser and returns IngestReport."""
     graph, vector, keyword, embed_fn, llm = mock_deps
     mock_ocr_cls.return_value = MagicMock()
 
@@ -205,8 +205,27 @@ def test_process_dicom_raises_not_implemented(mock_ocr_cls, settings, mock_deps)
         embed_fn=embed_fn,
         llm=llm,
     )
-    with pytest.raises(NotImplementedError):
-        agent.process_file("scan.dcm")
+
+    # Mock the dicom parser directly on the agent instance
+    mock_dicom_parser = MagicMock()
+    from medmdt.extractor.parsers.dicom_parser import DicomParseResult, DicomMetadata
+    mock_dicom_parser.parse.return_value = DicomParseResult(
+        metadata=DicomMetadata(patient_id="P001", patient_name="Test", modality="CT"),
+        image_analysis=None,
+        raw_text="患者ID: P001\n检查类型: CT",
+    )
+    agent._dicom_parser = mock_dicom_parser
+
+    import json
+    entity_resp = MagicMock()
+    entity_resp.content = json.dumps({"entities": [], "relations": []})
+    chunk_resp = MagicMock()
+    chunk_resp.content = json.dumps({"chunks": [{"text": "CT scan", "summary": "CT", "keywords": ["CT"]}]})
+    llm.invoke.side_effect = [entity_resp, chunk_resp]
+
+    reports = agent.process_file("scan.dcm")
+    assert len(reports) == 1
+    mock_dicom_parser.parse.assert_called_once_with("scan.dcm")
 
 
 @patch("medmdt.extractor.agent.PaddleOCRClient")
