@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 from medmdt.api.models import (
     ConsultationRequest,
     ConsultationResponse,
@@ -124,3 +125,40 @@ def test_consultation_store_list():
     store.create(req)
     all_items = store.list_all()
     assert len(all_items) == 2
+
+
+def test_max_rounds_lower_bound():
+    """max_rounds must be >= 1."""
+    with pytest.raises(ValidationError):
+        ConsultationRequest(
+            patient_info={"chief_complaint": "test"},
+            medical_records=[],
+            max_rounds=0,
+        )
+
+
+def test_max_rounds_upper_bound():
+    """max_rounds must be <= 10."""
+    with pytest.raises(ValidationError):
+        ConsultationRequest(
+            patient_info={"chief_complaint": "test"},
+            medical_records=[],
+            max_rounds=11,
+        )
+
+
+def test_max_rounds_boundary_valid():
+    """max_rounds at boundaries 1 and 10 should be valid."""
+    req_min = ConsultationRequest(
+        patient_info={"chief_complaint": "test"},
+        medical_records=[],
+        max_rounds=1,
+    )
+    assert req_min.max_rounds == 1
+
+    req_max = ConsultationRequest(
+        patient_info={"chief_complaint": "test"},
+        medical_records=[],
+        max_rounds=10,
+    )
+    assert req_max.max_rounds == 10

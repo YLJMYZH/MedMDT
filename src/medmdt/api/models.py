@@ -15,7 +15,7 @@ class ConsultationStatus(StrEnum):
 class ConsultationRequest(BaseModel):
     patient_info: dict
     medical_records: list[dict] = Field(default_factory=list)
-    max_rounds: int = 3
+    max_rounds: int = Field(default=3, ge=1, le=10)
 
 
 class ConsultationResponse(BaseModel):

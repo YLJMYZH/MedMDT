@@ -16,41 +16,28 @@ router = APIRouter(prefix="/api/v1/consultation", tags=["consultation"])
 
 
 def run_consultation_task(consultation_id: str, store: ConsultationStore) -> None:
-    from medmdt.config.settings import get_settings
-    from medmdt.llm.provider import create_chat_model
     from medmdt.mdt.experts.factory import create_all_experts
     from medmdt.mdt.moderator import Moderator
-    from medmdt.knowledge.graph_store import GraphStore
-    from medmdt.knowledge.vector_store import VectorStore
-    from medmdt.knowledge.keyword_store import KeywordStore
-    from medmdt.knowledge.retriever import FusionRetriever
     from medmdt.mdt.graph import build_mdt_graph, run_consultation
+    from medmdt.api.routes.ws import get_event_bus
+    from medmdt.api.deps import build_infrastructure
 
     entry = store.get(consultation_id)
     if not entry:
         return
 
+    bus = get_event_bus()
     store.update(consultation_id, status=ConsultationStatus.RUNNING)
+    bus.publish(consultation_id, {"type": "status", "status": "running"})
 
     try:
-        settings = get_settings()
-        llm = create_chat_model(settings.default_llm_provider, settings.default_llm_model)
+        infra = build_infrastructure()
+        settings = infra["settings"]
+        llm = infra["llm"]
+        retriever = infra["retriever"]
 
         experts = create_all_experts("config/experts.yaml")
         moderator = Moderator(llm=llm, consensus_threshold=settings.mdt_consensus_threshold)
-
-        graph_store = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
-        vector_store = VectorStore(
-            settings.milvus_host, settings.milvus_port, "medmdt_chunks", settings.embedding_dim,
-        )
-        keyword_store = KeywordStore(settings.elasticsearch_url)
-
-        def embed_fn(texts):
-            from langchain_openai import OpenAIEmbeddings
-            embeddings = OpenAIEmbeddings(model=settings.embedding_model)
-            return embeddings.embed_documents(texts)
-
-        retriever = FusionRetriever(graph_store, vector_store, keyword_store, llm, embed_fn)
 
         graph = build_mdt_graph(experts, moderator, retriever, llm)
         result = run_consultation(
@@ -68,9 +55,12 @@ def run_consultation_task(consultation_id: str, store: ConsultationStore) -> Non
             consensus=result["consensus"],
             divergences=result["divergences"],
         )
+        bus.publish(consultation_id, {"type": "done", "status": "completed"})
     except Exception as e:
         logger.exception("Consultation %s failed", consultation_id)
         store.update(consultation_id, status=ConsultationStatus.FAILED)
+        bus.publish(consultation_id, {"type": "error", "message": str(e)})
+        bus.publish(consultation_id, {"type": "done", "status": "failed"})
 
 
 @router.post("", status_code=201, response_model=ConsultationResponse)

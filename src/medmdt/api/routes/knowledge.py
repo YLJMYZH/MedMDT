@@ -12,66 +12,36 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
 
+MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB
+
 _ingest_jobs: dict[str, dict] = {}
 
 
 def _get_retriever():
-    from medmdt.config.settings import get_settings
-    from medmdt.llm.provider import create_chat_model
-    from medmdt.knowledge.graph_store import GraphStore
-    from medmdt.knowledge.vector_store import VectorStore
-    from medmdt.knowledge.keyword_store import KeywordStore
-    from medmdt.knowledge.retriever import FusionRetriever
+    from medmdt.api.deps import build_infrastructure
 
-    settings = get_settings()
-    llm = create_chat_model(settings.default_llm_provider, settings.default_llm_model)
-    graph_store = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
-    vector_store = VectorStore(
-        settings.milvus_host, settings.milvus_port, "medmdt_chunks", settings.embedding_dim,
-    )
-    keyword_store = KeywordStore(settings.elasticsearch_url)
-
-    def embed_fn(texts):
-        from langchain_openai import OpenAIEmbeddings
-        embeddings = OpenAIEmbeddings(model=settings.embedding_model)
-        return embeddings.embed_documents(texts)
-
-    return FusionRetriever(graph_store, vector_store, keyword_store, llm, embed_fn)
+    infra = build_infrastructure()
+    return infra["retriever"]
 
 
 def _run_ingest(job_id: str, file_path: str) -> None:
-    from medmdt.config.settings import get_settings
-    from medmdt.llm.provider import create_chat_model
-    from medmdt.knowledge.graph_store import GraphStore
-    from medmdt.knowledge.vector_store import VectorStore
-    from medmdt.knowledge.keyword_store import KeywordStore
+    from medmdt.api.deps import build_infrastructure
     from medmdt.extractor.agent import ExtractionAgent
 
     try:
         _ingest_jobs[job_id]["status"] = "processing"
-        settings = get_settings()
-        llm = create_chat_model(settings.default_llm_provider, settings.default_llm_model)
+        infra = build_infrastructure()
 
-        graph_store = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
-        vector_store = VectorStore(
-            settings.milvus_host, settings.milvus_port, "medmdt_chunks", settings.embedding_dim,
-        )
-        vector_store.ensure_collection()
-        keyword_store = KeywordStore(settings.elasticsearch_url)
-        keyword_store.ensure_index()
-
-        def embed_fn(texts):
-            from langchain_openai import OpenAIEmbeddings
-            embeddings = OpenAIEmbeddings(model=settings.embedding_model)
-            return embeddings.embed_documents(texts)
+        infra["vector_store"].ensure_collection()
+        infra["keyword_store"].ensure_index()
 
         agent = ExtractionAgent(
-            settings=settings,
-            graph_store=graph_store,
-            vector_store=vector_store,
-            keyword_store=keyword_store,
-            embed_fn=embed_fn,
-            llm=llm,
+            settings=infra["settings"],
+            graph_store=infra["graph_store"],
+            vector_store=infra["vector_store"],
+            keyword_store=infra["keyword_store"],
+            embed_fn=infra["embed_fn"],
+            llm=infra["llm"],
         )
         reports = agent.process_file(file_path)
         total_entities = sum(r.entities_count for r in reports)
@@ -110,10 +80,17 @@ def ingest_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
 ):
+    content = file.file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large: {len(content)} bytes exceeds {MAX_UPLOAD_SIZE} byte limit",
+        )
+
     job_id = f"ingest-{uuid.uuid4().hex[:12]}"
     suffix = Path(file.filename).suffix if file.filename else ".tmp"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp.write(file.file.read())
+    tmp.write(content)
     tmp.close()
 
     _ingest_jobs[job_id] = {
