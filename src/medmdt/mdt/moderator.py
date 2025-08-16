@@ -1,9 +1,9 @@
 # src/medmdt/mdt/moderator.py
 import json
-import re
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage
 from medmdt.mdt.state import ExpertOpinion, DiscussionRound
+from medmdt.mdt.utils import parse_llm_json
 from medmdt.llm.prompts.mdt.moderator_summary import MODERATOR_SUMMARY_PROMPT
 from medmdt.llm.prompts.mdt.report_generation import REPORT_GENERATION_PROMPT
 
@@ -28,7 +28,7 @@ class Moderator:
             SystemMessage(content="你是MDT会诊主持人，负责汇总和协调各专家意见。"),
             HumanMessage(content=prompt),
         ])
-        data = self._parse_json(response.content)
+        data = parse_llm_json(response.content)
         return DiscussionRound(
             round_num=0,
             opinions=opinions,
@@ -74,9 +74,3 @@ class Moderator:
         ])
         return response.content
 
-    @staticmethod
-    def _parse_json(text: str) -> dict:
-        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
-        if match:
-            text = match.group(1)
-        return json.loads(text.strip())

@@ -89,3 +89,28 @@ def test_expert_analyze_handles_json_in_markdown_fence(mock_llm):
     )
     assert isinstance(result, ExpertOpinion)
     assert result.confidence == 0.7
+
+
+def test_expert_analyze_sanitizes_identity_fields(mock_llm):
+    """LLM-supplied expert_id/expert_name must not override trusted values."""
+    response = MagicMock()
+    response.content = json.dumps({
+        "expert_id": "hacker",
+        "expert_name": "恶意名称",
+        "analysis": "分析",
+        "diagnosis": "诊断",
+        "recommendation": "建议",
+        "confidence": 0.9,
+        "reasoning": "推理",
+        "references": [],
+    })
+    mock_llm.invoke.return_value = response
+    expert = BaseExpert(
+        expert_id="cardiologist", name="心内科专家",
+        system_prompt="test", knowledge_domains=[], llm=mock_llm,
+    )
+    result = expert.analyze(
+        patient_info={}, medical_records=[], knowledge_context=[],
+    )
+    assert result.expert_id == "cardiologist"
+    assert result.expert_name == "心内科专家"

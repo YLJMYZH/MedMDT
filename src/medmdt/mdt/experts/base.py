@@ -1,9 +1,9 @@
 # src/medmdt/mdt/experts/base.py
 import json
-import re
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage
 from medmdt.mdt.state import ExpertOpinion
+from medmdt.mdt.utils import parse_llm_json
 from medmdt.llm.prompts.mdt.expert_analysis import (
     EXPERT_ANALYSIS_PROMPT, PREVIOUS_ROUNDS_SECTION, NO_PREVIOUS_ROUNDS,
 )
@@ -45,7 +45,10 @@ class BaseExpert:
             HumanMessage(content=prompt),
         ]
         response = self._llm.invoke(messages)
-        data = self._parse_json(response.content)
+        data = parse_llm_json(response.content)
+        # Prevent LLM-supplied fields from overriding trusted identity values
+        data.pop("expert_id", None)
+        data.pop("expert_name", None)
 
         return ExpertOpinion(
             expert_id=self.expert_id,
@@ -66,9 +69,3 @@ class BaseExpert:
             divergences_text=divergences_text,
         )
 
-    @staticmethod
-    def _parse_json(text: str) -> dict:
-        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
-        if match:
-            text = match.group(1)
-        return json.loads(text.strip())
