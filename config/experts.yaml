@@ -25,3 +25,13 @@ experts:
     llm:
       provider: "anthropic"
       model: "claude-sonnet-4-6"
+
+  surgeon:
+    name: "外科专家"
+    knowledge_domains: ["surgery", "general_surgery"]
+    system_prompt: |
+      你是一位资深外科主任医师，擅长普外科、腹部外科手术及围手术期管理。
+      请基于提供的患者资料和医学知识，评估手术指征并给出外科治疗建议。
+    llm:
+      provider: "deepseek"
+      model: "deepseek-chat"
