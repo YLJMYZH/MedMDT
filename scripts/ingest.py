@@ -1,0 +1,96 @@
+# scripts/ingest.py
+"""CLI entry point for ingesting medical documents into the knowledge base.
+
+Usage:
+    python scripts/ingest.py <file_or_directory>
+
+Processes PDF, image, and DICOM files through the extraction pipeline
+and writes entities, relations, and text chunks to the backing stores.
+"""
+
+import sys
+from pathlib import Path
+
+from medmdt.config.settings import get_settings
+from medmdt.llm.provider import create_chat_model
+from medmdt.knowledge.graph_store import GraphStore
+from medmdt.knowledge.vector_store import VectorStore
+from medmdt.knowledge.keyword_store import KeywordStore
+from medmdt.extractor.agent import ExtractionAgent
+from medmdt.extractor.ingestor import IngestReport
+
+SUPPORTED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".dcm"}
+
+
+def build_agent() -> ExtractionAgent:
+    """Wire up all dependencies and return a ready-to-use ExtractionAgent."""
+    settings = get_settings()
+    llm = create_chat_model(settings.default_llm_provider, settings.default_llm_model)
+
+    graph_store = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
+    vector_store = VectorStore(
+        settings.milvus_host, settings.milvus_port, "medmdt_chunks", settings.embedding_dim,
+    )
+    vector_store.ensure_collection()
+    keyword_store = KeywordStore(settings.elasticsearch_url)
+    keyword_store.ensure_index()
+
+    def embed_fn(texts: list[str]) -> list[list[float]]:
+        from langchain_openai import OpenAIEmbeddings
+
+        embeddings = OpenAIEmbeddings(model=settings.embedding_model)
+        return embeddings.embed_documents(texts)
+
+    return ExtractionAgent(
+        settings=settings,
+        graph_store=graph_store,
+        vector_store=vector_store,
+        keyword_store=keyword_store,
+        embed_fn=embed_fn,
+        llm=llm,
+    )
+
+
+def run_ingest(path: str) -> list[IngestReport]:
+    """Process a file or directory and return ingest reports.
+
+    For a single file, processes it directly.
+    For a directory, processes all files with supported extensions.
+    """
+    agent = build_agent()
+    target = Path(path)
+    all_reports: list[IngestReport] = []
+
+    if target.is_file():
+        reports = agent.process_file(str(target))
+        all_reports.extend(reports)
+        _print_reports(str(target), reports)
+    elif target.is_dir():
+        files = [f for f in target.iterdir() if f.suffix.lower() in SUPPORTED_EXTENSIONS]
+        for f in sorted(files):
+            try:
+                reports = agent.process_file(str(f))
+                all_reports.extend(reports)
+                _print_reports(str(f), reports)
+            except Exception as e:
+                print(f"[ERROR] {f}: {e}")
+    else:
+        print(f"Path not found: {path}")
+        sys.exit(1)
+
+    return all_reports
+
+
+def _print_reports(file_path: str, reports: list[IngestReport]) -> None:
+    """Print a summary line for a processed file."""
+    total_e = sum(r.entities_count for r in reports)
+    total_r = sum(r.relations_count for r in reports)
+    total_c = sum(r.chunks_count for r in reports)
+    print(f"[OK] {file_path}: {total_e} entities, {total_r} relations, {total_c} chunks")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python scripts/ingest.py <file_or_directory>")
+        sys.exit(1)
+    run_ingest(sys.argv[1])
