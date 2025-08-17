@@ -2,7 +2,7 @@
 name = "medmdt"
 version = "0.1.0"
 description = "Multi-expert medical consultation agent system"
-readme = "README.md"
+readme = "../README.md"
 requires-python = ">=3.12"
 dependencies = [
     "langgraph>=1.2.7",
