@@ -1,14 +1,34 @@
+import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import type { ConsultationResult } from '@/lib/types'
+import { api } from '@/lib/api'
 
 interface Props {
   result: ConsultationResult
 }
 
 export default function ConsultationReport({ result }: Props) {
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveMessage, setSaveMessage] = useState('')
+
+  const handleSaveToKnowledge = async () => {
+    setSaving(true)
+    try {
+      const res = await api.saveToKnowledge(result.id)
+      setSaved(true)
+      setSaveMessage(res.message)
+    } catch (err) {
+      setSaveMessage(`保存失败: ${err instanceof Error ? err.message : '未知错误'}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="space-y-6 max-w-4xl">
       <div className="flex items-center gap-3">
@@ -100,6 +120,23 @@ export default function ConsultationReport({ result }: Props) {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {result.status === 'completed' && (
+        <div className="flex items-center gap-3 pt-2">
+          <Button
+            onClick={handleSaveToKnowledge}
+            disabled={saved || saving}
+            variant={saved ? 'outline' : 'default'}
+          >
+            {saving ? '正在入库...' : saved ? '已记入知识库' : '记入知识库'}
+          </Button>
+          {saveMessage && (
+            <span className={`text-sm ${saved ? 'text-green-600' : 'text-destructive'}`}>
+              {saveMessage}
+            </span>
+          )}
+        </div>
       )}
     </div>
   )

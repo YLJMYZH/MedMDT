@@ -60,3 +60,33 @@ export interface StreamEvent {
   status?: string
   message?: string
 }
+
+export interface FolderResult {
+  folder_name: string
+  status: 'completed' | 'failed' | 'skipped'
+  files_processed: number
+  files_failed: number
+  message: string
+}
+
+export interface BatchIngestResponse {
+  job_id: string
+  status: string
+  message: string
+  progress: { current: number; total: number }
+  folders: FolderResult[]
+}
+
+export interface MedicalRecord {
+  record_type: string
+  content: string
+  filename: string
+  error?: string
+}
+
+export interface SaveToKnowledgeResponse {
+  status: string
+  message: string
+  entities_count: number
+  chunks_count: number
+}

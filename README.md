@@ -105,40 +105,44 @@ MedMDT/
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.12+ & [uv](https://docs.astral.sh/uv/)
 - Node.js 18+
 - Docker (for Neo4j, Milvus, and Elasticsearch)
 
-### 1. Start Infrastructure Services
+### Option 1: First-time Setup
 
 ```bash
-cd backend
-docker compose up -d
-```
-
-### 2. Configure Environment Variables
-
-```bash
-cp .env.example .env
+# 1. Configure environment variables
+cd backend && cp .env.example .env
 # Edit .env and add the LLM API key and other settings
+
+# 2. Install dependencies and start all services
+cd .. && make setup
 ```
 
-### 3. Start the Backend
+`make setup` installs the backend Python dependencies, installs the frontend npm packages, starts the Docker infrastructure, launches the backend API, and then starts the frontend development server.
+
+### Option 2: Daily Startup
 
 ```bash
-uv sync
-uv run python scripts/server.py
-# API: http://localhost:8000
+make start
 ```
 
-### 4. Start the Frontend
+### Other Commands
 
 ```bash
-cd frontend
-npm install
-npm run dev
-# Frontend: http://localhost:5173
+make stop    # Stop all services (frontend, backend, and Docker)
+make clean   # Remove dependencies and Docker volumes
 ```
+
+### Service URLs
+
+| Service | URL |
+|------|------|
+| Frontend | http://localhost:5173 |
+| Backend API | http://localhost:8000 |
+| API Documentation | http://localhost:8000/docs |
+| Neo4j Browser | http://localhost:7474 |
 
 ## API Overview
 

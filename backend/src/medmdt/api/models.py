@@ -49,6 +49,22 @@ class IngestResponse(BaseModel):
     message: str
 
 
+class FolderResultModel(BaseModel):
+    folder_name: str
+    status: str
+    files_processed: int = 0
+    files_failed: int = 0
+    message: str = ""
+
+
+class BatchIngestResponse(BaseModel):
+    job_id: str
+    status: str
+    message: str
+    progress: dict = Field(default_factory=lambda: {"current": 0, "total": 0})
+    folders: list[FolderResultModel] = Field(default_factory=list)
+
+
 class ConsultationStore:
     def __init__(self):
         self._store: dict[str, dict] = {}

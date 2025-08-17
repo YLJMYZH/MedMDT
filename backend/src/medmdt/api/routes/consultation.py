@@ -1,5 +1,9 @@
+import json
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+import tempfile
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
 
 from medmdt.api.models import (
     ConsultationRequest,
@@ -111,3 +115,172 @@ def get_consultation(
         consensus=entry.get("consensus"),
         divergences=entry.get("divergences", []),
     )
+
+
+SUPPORTED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".dcm", ".dicom"}
+
+
+@router.post("/upload")
+async def upload_consultation_files(files: list[UploadFile] = File(...)):
+    """Upload medical files and extract text content for use in consultation."""
+    from medmdt.api.deps import build_infrastructure
+    from medmdt.extractor.parsers.pdf_parser import PdfParser
+    from medmdt.extractor.parsers.image_parser import ImageParser
+    from medmdt.extractor.parsers.dicom_parser import DicomParser
+
+    infra = build_infrastructure()
+    settings = infra["settings"]
+    llm = infra["llm"]
+
+    records = []
+    for file in files:
+        suffix = Path(file.filename).suffix.lower() if file.filename else ""
+        if suffix not in SUPPORTED_EXTENSIONS:
+            records.append({
+                "record_type": "unsupported",
+                "content": "",
+                "filename": file.filename or "unknown",
+                "error": f"不支持的文件格式: {suffix}",
+            })
+            continue
+
+        content = await file.read()
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp.write(content)
+        tmp.close()
+
+        try:
+            text = _extract_text_from_file(tmp.name, suffix, settings, llm)
+            record_type = _classify_file_type(suffix)
+            records.append({
+                "record_type": record_type,
+                "content": text,
+                "filename": file.filename or "unknown",
+            })
+        except Exception as e:
+            records.append({
+                "record_type": "error",
+                "content": "",
+                "filename": file.filename or "unknown",
+                "error": str(e),
+            })
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
+
+    return {"records": records}
+
+
+def _extract_text_from_file(file_path: str, suffix: str, settings, llm) -> str:
+    """Extract text content from a medical file."""
+    from medmdt.extractor.parsers.pdf_parser import PdfParser
+    from medmdt.extractor.parsers.image_parser import ImageParser
+    from medmdt.extractor.parsers.dicom_parser import DicomParser
+
+    if suffix == ".pdf":
+        parser = PdfParser(api_url=settings.paddleocr_api_url, token=settings.paddleocr_token)
+        pages = parser.parse(file_path)
+        return "\n\n".join(p.markdown for p in pages if p.markdown)
+
+    elif suffix in (".jpg", ".jpeg", ".png", ".bmp", ".tiff"):
+        parser = ImageParser(llm=llm)
+        with open(file_path, "rb") as f:
+            image_bytes = f.read()
+        result = parser.analyze(image_bytes)
+        return f"[影像分析]\n模态: {result.get('modality', '未知')}\n描述: {result.get('description', '')}\n发现: {result.get('findings', '')}"
+
+    elif suffix in (".dcm", ".dicom"):
+        image_parser = ImageParser(llm=llm)
+        parser = DicomParser(image_parser=image_parser)
+        result = parser.parse(file_path)
+        return result.raw_text
+
+    return ""
+
+
+def _classify_file_type(suffix: str) -> str:
+    if suffix == ".pdf":
+        return "report"
+    elif suffix in (".dcm", ".dicom"):
+        return "dicom"
+    else:
+        return "image"
+
+
+@router.post("/{consultation_id}/save-to-knowledge")
+def save_consultation_to_knowledge(
+    consultation_id: str,
+    store: ConsultationStore = Depends(get_consultation_store),
+):
+    """Save a completed consultation case to the knowledge base."""
+    from medmdt.api.deps import build_infrastructure
+    from medmdt.extractor.agent import ExtractionAgent
+
+    entry = store.get(consultation_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+    if entry["status"] != ConsultationStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="只能将已完成的会诊记入知识库")
+
+    document = _format_consultation_document(entry)
+
+    infra = build_infrastructure()
+    infra["vector_store"].ensure_collection()
+    infra["keyword_store"].ensure_index()
+
+    agent = ExtractionAgent(
+        settings=infra["settings"],
+        graph_store=infra["graph_store"],
+        vector_store=infra["vector_store"],
+        keyword_store=infra["keyword_store"],
+        embed_fn=infra["embed_fn"],
+        llm=infra["llm"],
+    )
+
+    result = agent._extract_from_text(document, source=f"consultation:{consultation_id}")
+    from medmdt.extractor.ingestor import Ingestor
+    ingestor = Ingestor(
+        graph_store=infra["graph_store"],
+        vector_store=infra["vector_store"],
+        keyword_store=infra["keyword_store"],
+        embed_fn=infra["embed_fn"],
+    )
+    report = ingestor.ingest(result)
+
+    return {
+        "status": "ok",
+        "message": f"已记入知识库: {report.entities_count} 实体, {report.chunks_count} 文本块",
+        "entities_count": report.entities_count,
+        "chunks_count": report.chunks_count,
+    }
+
+
+def _format_consultation_document(entry: dict) -> str:
+    """Format a consultation entry as a structured text document for knowledge extraction."""
+    parts = []
+    parts.append("# 多专家会诊病例记录\n")
+
+    patient = entry.get("patient_info", {})
+    parts.append("## 患者信息")
+    for k, v in patient.items():
+        parts.append(f"- {k}: {v}")
+
+    if entry.get("medical_records"):
+        parts.append("\n## 病历资料")
+        for rec in entry["medical_records"]:
+            parts.append(f"### {rec.get('record_type', '其他')}")
+            parts.append(rec.get("content", ""))
+
+    if entry.get("final_report"):
+        parts.append("\n## 会诊结论")
+        parts.append(entry["final_report"])
+
+    if entry.get("consensus"):
+        parts.append("\n## 专家共识")
+        parts.append(json.dumps(entry["consensus"], ensure_ascii=False, indent=2))
+
+    if entry.get("divergences"):
+        parts.append("\n## 分歧点")
+        for d in entry["divergences"]:
+            parts.append(f"- {d}")
+
+    return "\n".join(parts)

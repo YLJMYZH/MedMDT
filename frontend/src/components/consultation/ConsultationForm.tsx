@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Slider } from '@/components/ui/slider'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import type { ConsultationRequest } from '@/lib/types'
+import type { ConsultationRequest, MedicalRecord } from '@/lib/types'
+import { api } from '@/lib/api'
 
 interface Props {
   onSubmit: (data: ConsultationRequest) => void
@@ -18,9 +20,39 @@ export default function ConsultationForm({ onSubmit, isSubmitting }: Props) {
   const [chiefComplaint, setChiefComplaint] = useState('')
   const [medicalHistory, setMedicalHistory] = useState('')
   const [maxRounds, setMaxRounds] = useState(3)
+  const [uploadedRecords, setUploadedRecords] = useState<MedicalRecord[]>([])
+  const [isUploading, setIsUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    setIsUploading(true)
+    try {
+      const result = await api.uploadConsultationFiles(Array.from(files))
+      setUploadedRecords(prev => [...prev, ...result.records])
+    } catch (err) {
+      console.error('File upload failed:', err)
+    } finally {
+      setIsUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const removeRecord = (index: number) => {
+    setUploadedRecords(prev => prev.filter((_, i) => i !== index))
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    const baseRecords: Array<Record<string, string>> = medicalHistory
+      ? [{ record_type: 'history', content: medicalHistory }]
+      : []
+    const fileRecords = uploadedRecords
+      .filter(r => !r.error)
+      .map(r => ({ record_type: r.record_type, content: r.content }))
+
     onSubmit({
       patient_info: {
         name,
@@ -29,9 +61,7 @@ export default function ConsultationForm({ onSubmit, isSubmitting }: Props) {
         chief_complaint: chiefComplaint,
         medical_history: medicalHistory,
       },
-      medical_records: medicalHistory
-        ? [{ record_type: 'history', content: medicalHistory }]
-        : [],
+      medical_records: [...baseRecords, ...fileRecords],
       max_rounds: maxRounds,
     })
   }
@@ -93,6 +123,55 @@ export default function ConsultationForm({ onSubmit, isSubmitting }: Props) {
               rows={4}
             />
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">上传检查报告 / 影像</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div
+            className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.jpg,.jpeg,.png,.bmp,.tiff,.dcm"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <p className="text-sm text-muted-foreground">
+              {isUploading ? '正在解析文件...' : '点击或拖拽上传 PDF / 图片 / DICOM 文件'}
+            </p>
+            <p className="text-xs text-muted-foreground/60 mt-1">
+              支持格式: PDF, JPG, PNG, BMP, TIFF, DICOM
+            </p>
+          </div>
+
+          {uploadedRecords.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {uploadedRecords.map((rec, i) => (
+                <Badge
+                  key={i}
+                  variant={rec.error ? 'destructive' : 'secondary'}
+                  className="gap-1 pr-1"
+                >
+                  <span className="max-w-[150px] truncate">{rec.filename}</span>
+                  <span className="text-[10px] opacity-70">({rec.record_type})</span>
+                  <button
+                    type="button"
+                    onClick={() => removeRecord(i)}
+                    className="ml-1 rounded-full w-4 h-4 inline-flex items-center justify-center hover:bg-foreground/10"
+                  >
+                    ×
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

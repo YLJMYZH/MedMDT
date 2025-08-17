@@ -4,6 +4,9 @@ import type {
   ConsultationResult,
   SearchResponse,
   IngestResponse,
+  BatchIngestResponse,
+  MedicalRecord,
+  SaveToKnowledgeResponse,
 } from './types'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -55,4 +58,40 @@ export const api = {
 
   getIngestStatus: (jobId: string) =>
     request<IngestResponse>(`/api/v1/knowledge/ingest/${jobId}`),
+
+  ingestBatch: async (file: File): Promise<BatchIngestResponse> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await fetch('/api/v1/knowledge/ingest/batch', {
+      method: 'POST',
+      body: formData,
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`${res.status}: ${text || res.statusText}`)
+    }
+    return res.json()
+  },
+
+  getBatchIngestStatus: (jobId: string) =>
+    request<BatchIngestResponse>(`/api/v1/knowledge/ingest/batch/${jobId}`),
+
+  uploadConsultationFiles: async (files: File[]): Promise<{ records: MedicalRecord[] }> => {
+    const formData = new FormData()
+    files.forEach(f => formData.append('files', f))
+    const res = await fetch('/api/v1/consultation/upload', {
+      method: 'POST',
+      body: formData,
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`${res.status}: ${text || res.statusText}`)
+    }
+    return res.json()
+  },
+
+  saveToKnowledge: (id: string) =>
+    request<SaveToKnowledgeResponse>(`/api/v1/consultation/${id}/save-to-knowledge`, {
+      method: 'POST',
+    }),
 }
