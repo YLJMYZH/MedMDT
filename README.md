@@ -4,35 +4,53 @@ A multi-expert medical consultation (MDT) agent system that uses LLM-powered mul
 
 ## System Architecture
 
-```
-                    ┌─────────────┐
-                    │  React Frontend  │
-                    │  (Vite+TS)  │
-                    └──────┬──────┘
-                           │ REST / WebSocket
-                    ┌──────▼──────┐
-                    │  FastAPI    │
-                    │  API Gateway   │
-                    └──────┬──────┘
-                           │
-              ┌────────────▼────────────┐
-              │   LangGraph MDT Engine    │
-              │                         │
-              │  Knowledge Retrieval → Specialist Selection     │
-              │  → Multi-Round Discussion → Report Generation  │
-              └────┬───────────────┬────┘
-                   │               │
-        ┌──────────▼──┐    ┌──────▼──────┐
-        │  Seven AI Specialists │    │  Fusion Retrieval  │
-        │  (Multi-Model Powered)  │    │  (Three-Way RRF Fusion) │
-        └─────────────┘    └──────┬──────┘
-                                  │
-                    ┌─────────────┼─────────────┐
-                    │             │             │
-               ┌────▼───┐  ┌────▼───┐  ┌──────▼──────┐
-               │ Neo4j  │  │ Milvus │  │Elasticsearch│
-               │ Knowledge Graph│  │ Vector Store  │  │  BM25 Full-Text Search  │
-               └────────┘  └────────┘  └─────────────┘
+```mermaid
+graph TB
+    subgraph Frontend
+        UI[React Frontend<br/>Vite + TypeScript + Tailwind]
+    end
+
+    subgraph API Layer
+        GW[FastAPI API Gateway]
+        WS[WebSocket Streaming]
+    end
+
+    subgraph MDT Engine
+        LG[LangGraph StateGraph]
+        LG --> KR[Knowledge Retrieval]
+        LG --> ES_SEL[Specialist Selection]
+        LG --> DISC[Multi-Round Discussion]
+        LG --> RPT[Report Generation]
+    end
+
+    subgraph Specialist Team
+        E1[Internal Medicine]
+        E2[Radiology]
+        E3[Surgery]
+        E4[Cardiology]
+        E5[Neurology]
+        E6[Oncology]
+        E7[Pathology]
+    end
+
+    subgraph Three-Way Knowledge Retrieval with RRF
+        NEO4J[(Neo4j<br/>Knowledge Graph)]
+        MILVUS[(Milvus<br/>Vector Search)]
+        ELAS[(Elasticsearch<br/>BM25 Full-Text Search)]
+    end
+
+    subgraph Document Processing
+        PDF[PDF Parsing<br/>PaddleOCR]
+        DICOM[DICOM Parsing<br/>pydicom]
+        IMG[Image Analysis<br/>Multimodal LLM]
+    end
+
+    UI -->|REST / WebSocket| GW
+    GW --- WS
+    GW --> LG
+    DISC --> E1 & E2 & E3 & E4 & E5 & E6 & E7
+    KR --> NEO4J & MILVUS & ELAS
+    PDF & DICOM & IMG -->|Knowledge Ingestion| NEO4J & MILVUS & ELAS
 ```
 
 ## Key Features
@@ -136,17 +154,20 @@ npm run dev
 
 ## Consultation Workflow
 
-```
-Patient Data Input
-    ↓
-Knowledge-base retrieval (three-way fusion)
-    ↓
-Select Relevant Specialists
-    ↓
-Multi-Round Specialist Discussion (up to 10 rounds)
-    ↓  Each round: Independent Specialist Analysis → Moderator Summary → Consensus Check
-    ↓
-Generate a consultation report (diagnosis + consensus + disagreements)
+```mermaid
+flowchart TD
+    A[Patient Data Input] --> B[Knowledge Retrieval<br/>Neo4j + Milvus + ES with RRF]
+    B --> C[Select Relevant Specialists]
+    C --> D[Multi-Round Specialist Discussion]
+
+    subgraph Each Discussion Round
+        D1[Independent Specialist Analysis] --> D2[Moderator Summary]
+        D2 --> D3{Consensus Reached?}
+        D3 -->|No, Fewer Than 10 Rounds| D1
+    end
+
+    D --> D1
+    D3 -->|Yes or 10 Rounds Reached| E[Generate Consultation Report<br/>Diagnosis + Consensus + Disagreements]
 ```
 
 ## License
