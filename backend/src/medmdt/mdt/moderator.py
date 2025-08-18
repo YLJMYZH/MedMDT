@@ -1,5 +1,6 @@
 # src/medmdt/mdt/moderator.py
 import json
+from collections.abc import Callable
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage
 from medmdt.mdt.state import ExpertOpinion, DiscussionRound
@@ -73,4 +74,45 @@ class Moderator:
             HumanMessage(content=prompt),
         ])
         return response.content
+
+    def stream_generate_report(
+        self,
+        patient_info: dict,
+        rounds: list[DiscussionRound],
+        consensus: dict | None,
+        divergences: list[str],
+        on_token: Callable[[str], None] | None = None,
+    ) -> str:
+        rounds_text = ""
+        for rd in rounds:
+            rounds_text += f"\n### 第{rd.round_num}轮\n"
+            if rd.summary:
+                rounds_text += f"汇总：{rd.summary}\n"
+            for op in rd.opinions:
+                rounds_text += f"- {op.expert_name}：{op.diagnosis}（置信度{op.confidence}）\n"
+            if rd.divergences:
+                rounds_text += f"分歧：{', '.join(rd.divergences)}\n"
+
+        if consensus:
+            conclusion = f"达成共识：{json.dumps(consensus, ensure_ascii=False)}"
+        else:
+            conclusion = f"未达成完全共识。分歧点：\n" + "\n".join(f"- {d}" for d in divergences)
+
+        prompt = REPORT_GENERATION_PROMPT.format(
+            patient_info=json.dumps(patient_info, ensure_ascii=False, indent=2),
+            rounds_text=rounds_text,
+            conclusion=conclusion,
+        )
+
+        full_text = ""
+        for chunk in self._llm.stream([
+            SystemMessage(content="你是一位专业的医学报告撰写者。"),
+            HumanMessage(content=prompt),
+        ]):
+            token = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if token and on_token:
+                on_token(token)
+            full_text += token
+
+        return full_text
 

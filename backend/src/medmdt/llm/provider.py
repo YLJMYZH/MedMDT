@@ -29,14 +29,6 @@ _OPENAI_COMPAT_URLS: dict[str, str] = {
     "deepseek": "https://api.deepseek.com/v1",
 }
 
-_OPENAI_COMPAT_KEY_ENVS: dict[str, str] = {
-    "qwen": "DASHSCOPE_API_KEY",
-    "zhipu": "ZHIPUAI_API_KEY",
-    "moonshot": "MOONSHOT_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-}
-
-
 def _create_openai(model: str, temperature: float, **kwargs) -> BaseChatModel:
     return ChatOpenAI(model=model, temperature=temperature, **kwargs)
 
@@ -58,14 +50,6 @@ def _create_openai_compat(
     }
     if api_key:
         params["api_key"] = api_key
-    else:
-        env_var = _OPENAI_COMPAT_KEY_ENVS.get(provider)
-        if env_var:
-            import os
-
-            key = os.environ.get(env_var)
-            if key:
-                params["api_key"] = key
     return ChatOpenAI(**params)
 
 

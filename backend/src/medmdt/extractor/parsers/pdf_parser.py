@@ -9,9 +9,12 @@ from medmdt.extractor.schemas import ParsedPage
 
 
 class PaddleOCRClient:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, token: str | None = None):
+        from medmdt.config.runtime import load_llm_settings
+        runtime = load_llm_settings()
+        resolved_token = token or runtime.paddleocr_token or ""
         self._api_url = settings.paddleocr_api_url
-        self._headers = {"Authorization": f"bearer {settings.paddleocr_token}"}
+        self._headers = {"Authorization": f"bearer {resolved_token}"}
         self._optional_payload = {
             "useDocOrientationClassify": settings.paddleocr_use_doc_orientation_classify,
             "useDocUnwarping": settings.paddleocr_use_doc_unwarping,

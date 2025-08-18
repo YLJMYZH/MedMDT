@@ -55,10 +55,47 @@ export interface IngestResponse {
   message: string
 }
 
-export interface StreamEvent {
-  type: 'status' | 'done' | 'error'
-  status?: string
-  message?: string
+export type StreamEvent =
+  | { type: 'status'; status: string }
+  | { type: 'phase_start'; phase: string }
+  | { type: 'experts_selected'; expert_ids: string[]; expert_names: Record<string, string> }
+  | { type: 'round_start'; round_num: number; total_rounds: number }
+  | { type: 'expert_start'; round_num: number; expert_id: string; expert_name: string; expert_index: number; total_experts: number }
+  | { type: 'expert_token'; expert_id: string; token: string }
+  | { type: 'expert_end'; round_num: number; expert_id: string; opinion: ExpertOpinion }
+  | { type: 'round_summary'; round_num: number; summary: string; divergences: string[]; has_consensus: boolean }
+  | { type: 'report_token'; token: string }
+  | { type: 'done'; status: string }
+  | { type: 'error'; message: string }
+
+export interface ExpertStreamState {
+  expertId: string
+  expertName: string
+  streamedText: string
+  opinion: ExpertOpinion | null
+  isStreaming: boolean
+  isComplete: boolean
+}
+
+export interface RoundState {
+  roundNum: number
+  totalRounds: number
+  experts: ExpertStreamState[]
+  summary: string | null
+  divergences: string[]
+  hasConsensus: boolean | null
+  isComplete: boolean
+}
+
+export interface MDTStreamState {
+  currentPhase: string | null
+  expertNames: Record<string, string>
+  selectedExpertIds: string[]
+  rounds: RoundState[]
+  reportBuffer: string
+  isDone: boolean
+  doneStatus: string | null
+  error: string | null
 }
 
 export interface FolderResult {
@@ -89,4 +126,20 @@ export interface SaveToKnowledgeResponse {
   message: string
   entities_count: number
   chunks_count: number
+}
+
+export interface ProviderInfo {
+  key: string
+  label: string
+  needs_key: boolean
+  needs_base_url?: boolean
+}
+
+export interface LLMSettingsData {
+  provider: string
+  model: string
+  api_key: string | null
+  base_url: string | null
+  paddleocr_token: string | null
+  providers: ProviderInfo[]
 }

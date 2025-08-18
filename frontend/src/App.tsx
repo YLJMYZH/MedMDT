@@ -5,6 +5,7 @@ import DashboardPage from '@/pages/DashboardPage'
 import ConsultationPage from '@/pages/ConsultationPage'
 import KnowledgePage from '@/pages/KnowledgePage'
 import HistoryPage from '@/pages/HistoryPage'
+import SettingsPage from '@/pages/SettingsPage'
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
           <Route path="/consultation" element={<ConsultationPage />} />
           <Route path="/knowledge" element={<KnowledgePage />} />
           <Route path="/history" element={<HistoryPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Routes>
     </ThemeProvider>

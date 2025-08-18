@@ -144,18 +144,6 @@ make clean   # Remove dependencies and Docker volumes
 | API Documentation | http://localhost:8000/docs |
 | Neo4j Browser | http://localhost:7474 |
 
-## API Overview
-
-| Method | Path | Description |
-|------|------|------|
-| POST | `/api/v1/consultation` | Create a consultation |
-| GET | `/api/v1/consultation` | List consultations |
-| GET | `/api/v1/consultation/{id}` | Get consultation details |
-| WS | `/api/v1/consultation/{id}/stream` | Stream real-time progress |
-| POST | `/api/v1/knowledge/search` | Search the knowledge base |
-| POST | `/api/v1/knowledge/ingest` | Upload and ingest a file |
-| GET | `/api/v1/knowledge/ingest/{job_id}` | Get ingestion job status |
-
 ## Consultation Workflow
 
 ```mermaid

@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/v1/consultation", tags=["consultation"])
 def run_consultation_task(consultation_id: str, store: ConsultationStore) -> None:
     from medmdt.mdt.experts.factory import create_all_experts
     from medmdt.mdt.moderator import Moderator
-    from medmdt.mdt.graph import build_mdt_graph, run_consultation
+    from medmdt.mdt.streaming import StreamingOrchestrator
     from medmdt.api.routes.ws import get_event_bus
     from medmdt.api.deps import build_infrastructure
 
@@ -43,9 +43,15 @@ def run_consultation_task(consultation_id: str, store: ConsultationStore) -> Non
         experts = create_all_experts("config/experts.yaml")
         moderator = Moderator(llm=llm, consensus_threshold=settings.mdt_consensus_threshold)
 
-        graph = build_mdt_graph(experts, moderator, retriever, llm)
-        result = run_consultation(
-            graph,
+        orchestrator = StreamingOrchestrator(
+            experts=experts,
+            moderator=moderator,
+            retriever=retriever,
+            selector_llm=llm,
+            event_bus=bus,
+            consultation_id=consultation_id,
+        )
+        result = orchestrator.run(
             patient_info=entry["patient_info"],
             medical_records=entry["medical_records"],
             max_rounds=entry["max_rounds"],
@@ -124,7 +130,6 @@ SUPPORTED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".dcm"
 async def upload_consultation_files(files: list[UploadFile] = File(...)):
     """Upload medical files and extract text content for use in consultation."""
     from medmdt.api.deps import build_infrastructure
-    from medmdt.extractor.parsers.pdf_parser import PdfParser
     from medmdt.extractor.parsers.image_parser import ImageParser
     from medmdt.extractor.parsers.dicom_parser import DicomParser
 
@@ -172,12 +177,12 @@ async def upload_consultation_files(files: list[UploadFile] = File(...)):
 
 def _extract_text_from_file(file_path: str, suffix: str, settings, llm) -> str:
     """Extract text content from a medical file."""
-    from medmdt.extractor.parsers.pdf_parser import PdfParser
+    from medmdt.extractor.parsers.pdf_parser import PaddleOCRClient
     from medmdt.extractor.parsers.image_parser import ImageParser
     from medmdt.extractor.parsers.dicom_parser import DicomParser
 
     if suffix == ".pdf":
-        parser = PdfParser(api_url=settings.paddleocr_api_url, token=settings.paddleocr_token)
+        parser = PaddleOCRClient(settings)
         pages = parser.parse(file_path)
         return "\n\n".join(p.markdown for p in pages if p.markdown)
 

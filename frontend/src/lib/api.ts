@@ -7,6 +7,7 @@ import type {
   BatchIngestResponse,
   MedicalRecord,
   SaveToKnowledgeResponse,
+  LLMSettingsData,
 } from './types'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -93,5 +94,26 @@ export const api = {
   saveToKnowledge: (id: string) =>
     request<SaveToKnowledgeResponse>(`/api/v1/consultation/${id}/save-to-knowledge`, {
       method: 'POST',
+    }),
+
+  getSettings: () =>
+    request<LLMSettingsData>('/api/v1/settings'),
+
+  saveSettings: (data: { provider: string; model: string; api_key?: string | null; base_url?: string | null; paddleocr_token?: string | null }) =>
+    request<{ status: string; message: string }>('/api/v1/settings', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  testConnection: (data: { provider: string; model: string; api_key?: string | null; base_url?: string | null }) =>
+    request<{ status: string; message: string }>('/api/v1/settings/test', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  listModels: (data: { provider: string; api_key?: string | null; base_url?: string | null }) =>
+    request<{ models: string[] }>('/api/v1/settings/models', {
+      method: 'POST',
+      body: JSON.stringify(data),
     }),
 }

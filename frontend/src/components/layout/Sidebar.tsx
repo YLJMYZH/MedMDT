@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Stethoscope, Database, Clock, X } from 'lucide-react'
+import { LayoutDashboard, Stethoscope, Database, Clock, Settings, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
@@ -7,6 +7,7 @@ const navItems = [
   { to: '/consultation', label: '新建会诊', icon: Stethoscope },
   { to: '/knowledge', label: '知识库', icon: Database },
   { to: '/history', label: '会诊历史', icon: Clock },
+  { to: '/settings', label: '设置', icon: Settings },
 ]
 
 interface SidebarProps {

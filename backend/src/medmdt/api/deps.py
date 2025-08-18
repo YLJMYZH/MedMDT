@@ -20,8 +20,22 @@ def build_infrastructure() -> dict:
     from medmdt.knowledge.keyword_store import KeywordStore
     from medmdt.knowledge.retriever import FusionRetriever
 
+    from medmdt.config.runtime import load_llm_settings
+
     settings = get_settings()
-    llm = create_chat_model(settings.default_llm_provider, settings.default_llm_model)
+    runtime = load_llm_settings()
+
+    llm_kwargs = {}
+    if runtime.api_key:
+        llm_kwargs["api_key"] = runtime.api_key
+    if runtime.base_url:
+        llm_kwargs["base_url"] = runtime.base_url
+
+    llm = create_chat_model(
+        runtime.provider,
+        runtime.model,
+        **llm_kwargs,
+    )
 
     graph_store = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
     vector_store = VectorStore(

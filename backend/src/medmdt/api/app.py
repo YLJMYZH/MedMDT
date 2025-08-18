@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from medmdt.api.routes.consultation import router as consultation_router
 from medmdt.api.routes.knowledge import router as knowledge_router
+from medmdt.api.routes.settings import router as settings_router
 from medmdt.api.routes.ws import router as ws_router
 
 
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
 
     app.include_router(consultation_router)
     app.include_router(knowledge_router)
+    app.include_router(settings_router)
     app.include_router(ws_router)
 
     return app

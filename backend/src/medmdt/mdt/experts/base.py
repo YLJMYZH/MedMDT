@@ -1,5 +1,6 @@
 # src/medmdt/mdt/experts/base.py
 import json
+from collections.abc import Callable
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage
 from medmdt.mdt.state import ExpertOpinion
@@ -47,6 +48,45 @@ class BaseExpert:
         response = self._llm.invoke(messages)
         data = parse_llm_json(response.content)
         # Prevent LLM-supplied fields from overriding trusted identity values
+        data.pop("expert_id", None)
+        data.pop("expert_name", None)
+
+        return ExpertOpinion(
+            expert_id=self.expert_id,
+            expert_name=self.name,
+            **data,
+        )
+
+    def stream_analyze(
+        self,
+        patient_info: dict,
+        medical_records: list[dict],
+        knowledge_context: list[dict],
+        previous_rounds: list[dict] | None = None,
+        on_token: Callable[[str], None] | None = None,
+    ) -> ExpertOpinion:
+        previous_section = self._format_previous_rounds(previous_rounds)
+
+        prompt = EXPERT_ANALYSIS_PROMPT.format(
+            patient_info=json.dumps(patient_info, ensure_ascii=False, indent=2),
+            medical_records=json.dumps(medical_records, ensure_ascii=False, indent=2),
+            knowledge_context=json.dumps(knowledge_context, ensure_ascii=False, indent=2),
+            previous_rounds_section=previous_section,
+        )
+
+        messages = [
+            SystemMessage(content=self.system_prompt),
+            HumanMessage(content=prompt),
+        ]
+
+        full_text = ""
+        for chunk in self._llm.stream(messages):
+            token = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if token and on_token:
+                on_token(token)
+            full_text += token
+
+        data = parse_llm_json(full_text)
         data.pop("expert_id", None)
         data.pop("expert_name", None)
 

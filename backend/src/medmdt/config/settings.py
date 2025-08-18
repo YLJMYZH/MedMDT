@@ -15,11 +15,7 @@ class Settings(BaseSettings):
 
     elasticsearch_url: str = "http://localhost:9200"
 
-    default_llm_provider: str = "openai"
-    default_llm_model: str = "gpt-4o"
-
     paddleocr_api_url: str = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
-    paddleocr_token: str
     paddleocr_use_doc_orientation_classify: bool = False
     paddleocr_use_doc_unwarping: bool = False
     paddleocr_use_chart_recognition: bool = False
