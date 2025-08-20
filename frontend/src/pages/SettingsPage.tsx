@@ -214,7 +214,7 @@ function EmbeddingSection({
   const fetchModels = useCallback(async (p: string, key: string, url: string) => {
     setLoadingModels(true)
     try {
-      const res = await api.listModels({ provider: p, api_key: key || null, base_url: url || null })
+      const res = await api.listEmbeddingModels({ provider: p, api_key: key || null, base_url: url || null })
       setModels(res.models)
       if (res.models.length > 0) {
         setModel(prev => res.models.includes(prev) ? prev : res.models[0])

@@ -116,4 +116,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  listEmbeddingModels: (data: { provider: string; api_key?: string | null; base_url?: string | null }) =>
+    request<{ models: string[] }>('/api/v1/settings/embedding-models', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 }

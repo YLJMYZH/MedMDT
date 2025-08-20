@@ -239,6 +239,47 @@ def list_models(body: ModelsRequest):
     return _fetch_openai_compat_models(base_url, api_key)
 
 
+@router.post("/embedding-models")
+def list_embedding_models(body: ModelsRequest):
+    api_key = body.api_key
+    if api_key and "****" in api_key:
+        current = load_llm_settings()
+        api_key = current.embedding.api_key
+
+    base_url = body.base_url or _PROVIDER_BASE_URLS.get(body.provider)
+    if not base_url:
+        raise HTTPException(status_code=400, detail="需要提供 Base URL")
+
+    return _fetch_embedding_models(base_url, api_key)
+
+
+def _fetch_embedding_models(base_url: str, api_key: str | None) -> dict:
+    url = f"{base_url.rstrip('/')}/models"
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        resp = http_requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        models = []
+        for item in data:
+            if "id" not in item:
+                continue
+            model_id = item["id"]
+            obj_type = item.get("object", "")
+            owned_by = item.get("owned_by", "")
+            if (
+                "embed" in model_id.lower()
+                or obj_type == "embedding"
+                or "embedding" in owned_by.lower()
+            ):
+                models.append(model_id)
+        return {"models": sorted(models)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"获取模型列表失败: {str(e)}")
+
+
 def _fetch_openai_compat_models(base_url: str, api_key: str | None) -> dict:
     url = f"{base_url.rstrip('/')}/models"
     headers = {}
