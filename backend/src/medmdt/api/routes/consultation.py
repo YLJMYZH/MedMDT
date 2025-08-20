@@ -135,7 +135,7 @@ async def upload_consultation_files(files: list[UploadFile] = File(...)):
 
     infra = build_infrastructure()
     settings = infra["settings"]
-    llm = infra["llm"]
+    llm = infra["vision_llm"]
 
     records = []
     for file in files:
@@ -190,14 +190,20 @@ def _extract_text_from_file(file_path: str, suffix: str, settings, llm) -> str:
         parser = ImageParser(llm=llm)
         with open(file_path, "rb") as f:
             image_bytes = f.read()
-        result = parser.analyze(image_bytes)
-        return f"[影像分析]\n模态: {result.get('modality', '未知')}\n描述: {result.get('description', '')}\n发现: {result.get('findings', '')}"
+        try:
+            result = parser.analyze(image_bytes)
+            return f"[影像分析]\n模态: {result.modality or '未知'}\n描述: {result.description}\n发现: {', '.join(result.findings)}"
+        except Exception:
+            raise ValueError("当前模型不支持多模态图片分析，请在设置中切换为支持视觉的模型（如 qwen-vl-max）")
 
     elif suffix in (".dcm", ".dicom"):
         image_parser = ImageParser(llm=llm)
         parser = DicomParser(image_parser=image_parser)
-        result = parser.parse(file_path)
-        return result.raw_text
+        try:
+            result = parser.parse(file_path)
+            return result.raw_text
+        except Exception:
+            raise ValueError("当前模型不支持多模态图片分析，请在设置中切换为支持视觉的模型（如 qwen-vl-max）")
 
     return ""
 

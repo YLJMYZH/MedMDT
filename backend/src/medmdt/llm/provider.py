@@ -1,5 +1,5 @@
 # src/medmdt/llm/provider.py
-"""LLM provider factory — unified interface for 8 providers."""
+"""LLM provider factory — unified interface for multiple providers."""
 
 from dataclasses import dataclass
 from typing import Callable
@@ -7,7 +7,6 @@ from typing import Callable
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
-from langchain_ollama import ChatOllama
 
 
 @dataclass
@@ -53,10 +52,6 @@ def _create_openai_compat(
     return ChatOpenAI(**params)
 
 
-def _create_ollama(model: str, temperature: float, **kwargs) -> BaseChatModel:
-    return ChatOllama(model=model, temperature=temperature, **kwargs)
-
-
 def _create_custom(model: str, temperature: float, **kwargs) -> BaseChatModel:
     base_url = kwargs.pop("base_url", None)
     api_key = kwargs.pop("api_key", None)
@@ -80,7 +75,6 @@ PROVIDER_REGISTRY: dict[str, Callable] = {
     "zhipu": lambda m, t, **kw: _create_openai_compat("zhipu", m, t, **kw),
     "moonshot": lambda m, t, **kw: _create_openai_compat("moonshot", m, t, **kw),
     "deepseek": lambda m, t, **kw: _create_openai_compat("deepseek", m, t, **kw),
-    "ollama": lambda m, t, **kw: _create_ollama(m, t, **kw),
     "custom": lambda m, t, **kw: _create_custom(m, t, **kw),
 }
 

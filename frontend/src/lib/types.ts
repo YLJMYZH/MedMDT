@@ -135,11 +135,33 @@ export interface ProviderInfo {
   needs_base_url?: boolean
 }
 
-export interface LLMSettingsData {
+export interface EndpointData {
   provider: string
   model: string
   api_key: string | null
   base_url: string | null
+}
+
+export interface EmbeddingData {
+  provider: string
+  model: string
+  api_key: string | null
+  base_url: string | null
+  dim: number
+}
+
+export interface ExpertLLMData {
+  provider: string
+  model: string
+}
+
+export interface LLMSettingsData {
+  consultation: EndpointData
+  knowledge: EndpointData
+  vision: EndpointData
+  embedding: EmbeddingData
+  experts: Record<string, ExpertLLMData>
+  expert_names: Record<string, string>
   paddleocr_token: string | null
   providers: ProviderInfo[]
 }

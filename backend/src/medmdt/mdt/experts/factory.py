@@ -42,8 +42,8 @@ def load_expert_configs(yaml_path: str) -> list[ExpertConfig]:
     return configs
 
 
-def create_expert(config: ExpertConfig) -> BaseExpert:
-    llm = create_chat_model(config.llm_provider, config.llm_model)
+def create_expert(config: ExpertConfig, **llm_kwargs) -> BaseExpert:
+    llm = create_chat_model(config.llm_provider, config.llm_model, **llm_kwargs)
     return BaseExpert(
         expert_id=config.expert_id,
         name=config.name,
@@ -54,8 +54,17 @@ def create_expert(config: ExpertConfig) -> BaseExpert:
 
 
 def create_all_experts(yaml_path: str) -> dict[str, BaseExpert]:
+    from medmdt.config.runtime import load_llm_settings, get_expert_endpoint, get_llm_kwargs
+
+    runtime = load_llm_settings()
     configs = load_expert_configs(yaml_path)
-    return {cfg.expert_id: create_expert(cfg) for cfg in configs}
+    experts = {}
+    for cfg in configs:
+        endpoint = get_expert_endpoint(runtime, cfg.expert_id)
+        cfg.llm_provider = endpoint.provider
+        cfg.llm_model = endpoint.model
+        experts[cfg.expert_id] = create_expert(cfg, **get_llm_kwargs(endpoint))
+    return experts
 
 
 SELECT_EXPERTS_PROMPT = """你是一位MDT会诊协调员。根据患者信息，从以下专家中选择与病情最相关的专家参与会诊。

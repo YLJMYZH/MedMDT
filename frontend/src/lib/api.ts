@@ -99,7 +99,7 @@ export const api = {
   getSettings: () =>
     request<LLMSettingsData>('/api/v1/settings'),
 
-  saveSettings: (data: { provider: string; model: string; api_key?: string | null; base_url?: string | null; paddleocr_token?: string | null }) =>
+  saveSettings: (data: Record<string, unknown>) =>
     request<{ status: string; message: string }>('/api/v1/settings', {
       method: 'PUT',
       body: JSON.stringify(data),

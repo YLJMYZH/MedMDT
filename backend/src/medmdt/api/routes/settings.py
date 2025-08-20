@@ -1,5 +1,4 @@
 import logging
-from dataclasses import asdict
 
 import requests as http_requests
 from fastapi import APIRouter, HTTPException
@@ -7,6 +6,9 @@ from pydantic import BaseModel
 
 from medmdt.config.runtime import (
     LLMSettings,
+    LLMEndpoint,
+    EmbeddingEndpoint,
+    ExpertLLM,
     load_llm_settings,
     save_llm_settings,
     mask_api_key,
@@ -24,25 +26,47 @@ PROVIDERS = [
     {"key": "qwen", "label": "Qwen (通义千问)", "needs_key": True},
     {"key": "zhipu", "label": "ZhiPu (智谱)", "needs_key": True},
     {"key": "moonshot", "label": "Moonshot (月之暗面)", "needs_key": True},
-    {"key": "ollama", "label": "Ollama (本地)", "needs_key": False},
-    {"key": "custom", "label": "自定义 (OpenAI 兼容)", "needs_key": False, "needs_base_url": True},
+    {"key": "custom", "label": "自定义 (OpenAI 兼容)", "needs_key": True, "needs_base_url": True},
 ]
 
 
+class EndpointData(BaseModel):
+    provider: str = "deepseek"
+    model: str = "deepseek-chat"
+    api_key: str | None = None
+    base_url: str | None = None
+
+
+class EmbeddingData(BaseModel):
+    provider: str = "openai"
+    model: str = "bge-large-zh-v1.5"
+    api_key: str | None = None
+    base_url: str | None = None
+    dim: int = 1024
+
+
+class ExpertLLMData(BaseModel):
+    provider: str = ""
+    model: str = ""
+
+
 class SettingsResponse(BaseModel):
-    provider: str
-    model: str
-    api_key: str | None
-    base_url: str | None
+    consultation: EndpointData
+    knowledge: EndpointData
+    vision: EndpointData
+    embedding: EmbeddingData
+    experts: dict[str, ExpertLLMData]
+    expert_names: dict[str, str]
     paddleocr_token: str | None
     providers: list[dict]
 
 
 class SettingsUpdate(BaseModel):
-    provider: str
-    model: str
-    api_key: str | None = None
-    base_url: str | None = None
+    consultation: EndpointData | None = None
+    knowledge: EndpointData | None = None
+    vision: EndpointData | None = None
+    embedding: EmbeddingData | None = None
+    experts: dict[str, ExpertLLMData] | None = None
     paddleocr_token: str | None = None
 
 
@@ -53,37 +77,108 @@ class TestRequest(BaseModel):
     base_url: str | None = None
 
 
+def _load_expert_names() -> dict[str, str]:
+    from medmdt.mdt.experts.factory import load_expert_configs
+    try:
+        configs = load_expert_configs("config/experts.yaml")
+        return {cfg.expert_id: cfg.name for cfg in configs}
+    except Exception:
+        return {}
+
+
+def _mask_endpoint(ep: LLMEndpoint) -> EndpointData:
+    return EndpointData(
+        provider=ep.provider,
+        model=ep.model,
+        api_key=mask_api_key(ep.api_key),
+        base_url=ep.base_url,
+    )
+
+
+def _mask_embedding(ep: EmbeddingEndpoint) -> EmbeddingData:
+    return EmbeddingData(
+        provider=ep.provider,
+        model=ep.model,
+        api_key=mask_api_key(ep.api_key),
+        base_url=ep.base_url,
+        dim=ep.dim,
+    )
+
+
 @router.get("", response_model=SettingsResponse)
 def get_settings():
     settings = load_llm_settings()
+    expert_names = _load_expert_names()
+    experts_data = {}
+    for eid in expert_names:
+        ecfg = settings.experts.get(eid, ExpertLLM())
+        experts_data[eid] = ExpertLLMData(provider=ecfg.provider, model=ecfg.model)
+
     return SettingsResponse(
-        provider=settings.provider,
-        model=settings.model,
-        api_key=mask_api_key(settings.api_key),
-        base_url=settings.base_url,
+        consultation=_mask_endpoint(settings.consultation),
+        knowledge=_mask_endpoint(settings.knowledge),
+        vision=_mask_endpoint(settings.vision),
+        embedding=_mask_embedding(settings.embedding),
+        experts=experts_data,
+        expert_names=expert_names,
         paddleocr_token=mask_api_key(settings.paddleocr_token),
         providers=PROVIDERS,
     )
 
 
+def _resolve_key(new_key: str | None, current_key: str | None) -> str | None:
+    if new_key and "****" in new_key:
+        return current_key
+    return new_key
+
+
 @router.put("")
 def update_settings(body: SettingsUpdate):
-    if body.provider not in PROVIDER_REGISTRY:
-        raise HTTPException(status_code=400, detail=f"不支持的 provider: {body.provider}")
-
     current = load_llm_settings()
-    api_key = body.api_key
-    if api_key and "****" in api_key:
-        api_key = current.api_key
+
+    def _update_endpoint(new: EndpointData | None, cur: LLMEndpoint) -> LLMEndpoint:
+        if not new:
+            return cur
+        return LLMEndpoint(
+            provider=new.provider,
+            model=new.model,
+            api_key=_resolve_key(new.api_key, cur.api_key),
+            base_url=new.base_url,
+        )
+
+    def _update_embedding(new: EmbeddingData | None, cur: EmbeddingEndpoint) -> EmbeddingEndpoint:
+        if not new:
+            return cur
+        return EmbeddingEndpoint(
+            provider=new.provider,
+            model=new.model,
+            api_key=_resolve_key(new.api_key, cur.api_key),
+            base_url=new.base_url,
+            dim=new.dim,
+        )
+
+    consultation = _update_endpoint(body.consultation, current.consultation)
+    knowledge = _update_endpoint(body.knowledge, current.knowledge)
+    vision = _update_endpoint(body.vision, current.vision)
+    embedding = _update_embedding(body.embedding, current.embedding)
+
+    experts = current.experts.copy()
+    if body.experts is not None:
+        for eid, ecfg in body.experts.items():
+            experts[eid] = ExpertLLM(provider=ecfg.provider, model=ecfg.model)
+
     paddleocr_token = body.paddleocr_token
     if paddleocr_token and "****" in paddleocr_token:
         paddleocr_token = current.paddleocr_token
+    elif paddleocr_token is None:
+        paddleocr_token = current.paddleocr_token
 
     settings = LLMSettings(
-        provider=body.provider,
-        model=body.model,
-        api_key=api_key,
-        base_url=body.base_url,
+        consultation=consultation,
+        knowledge=knowledge,
+        vision=vision,
+        embedding=embedding,
+        experts=experts,
         paddleocr_token=paddleocr_token,
     )
     save_llm_settings(settings)
@@ -98,7 +193,7 @@ def test_connection(body: TestRequest):
     api_key = body.api_key
     if api_key and "****" in api_key:
         current = load_llm_settings()
-        api_key = current.api_key
+        api_key = current.consultation.api_key
 
     kwargs = {}
     if api_key:
@@ -118,7 +213,6 @@ def test_connection(body: TestRequest):
 _PROVIDER_BASE_URLS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
     **_OPENAI_COMPAT_URLS,
-    "ollama": "http://127.0.0.1:11434/v1",
 }
 
 
@@ -133,7 +227,7 @@ def list_models(body: ModelsRequest):
     api_key = body.api_key
     if api_key and "****" in api_key:
         current = load_llm_settings()
-        api_key = current.api_key
+        api_key = current.consultation.api_key
 
     if body.provider == "anthropic":
         return _fetch_anthropic_models(api_key)

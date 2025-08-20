@@ -11,7 +11,7 @@ def test_llm_config_defaults():
 
 
 def test_provider_registry_has_all_providers():
-    expected = {"openai", "anthropic", "qwen", "zhipu", "moonshot", "deepseek", "ollama", "custom"}
+    expected = {"openai", "anthropic", "qwen", "zhipu", "moonshot", "deepseek", "custom"}
     assert expected == set(PROVIDER_REGISTRY.keys())
 
 
