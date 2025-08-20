@@ -594,7 +594,7 @@ export default function SettingsPage() {
             <CardTitle className="text-lg">知识检索/提取</CardTitle>
             <p className="text-sm text-muted-foreground">用于知识库检索和文档信息提取</p>
           </CardHeader>
-          <CardContent className="space-y-0">
+          <CardContent>
             <h4 className="text-sm font-semibold mb-4">大语言模型</h4>
             <LLMSection
               providers={providers}
@@ -605,18 +605,16 @@ export default function SettingsPage() {
                 setKnowledge(ep)
               }}
             />
-            <div className="border-t my-8" />
-            <div>
-              <h4 className="text-sm font-semibold mb-4">Embedding 模型</h4>
-              <EmbeddingSection
-                providers={providers}
-                embeddingData={embedding}
-                onSave={async (emb) => {
-                  await api.saveSettings({ embedding: emb })
-                  setEmbedding(emb)
-                }}
-              />
-            </div>
+            <hr className="my-8 border-border" />
+            <h4 className="text-sm font-semibold mb-4">Embedding 模型</h4>
+            <EmbeddingSection
+              providers={providers}
+              embeddingData={embedding}
+              onSave={async (emb) => {
+                await api.saveSettings({ embedding: emb })
+                setEmbedding(emb)
+              }}
+            />
           </CardContent>
         </Card>
 
