@@ -605,7 +605,8 @@ export default function SettingsPage() {
                 setKnowledge(ep)
               }}
             />
-            <div className="border-t pt-4 mt-6">
+            <div className="border-t mt-6 mb-6" />
+            <div>
               <h4 className="text-sm font-semibold mb-4">Embedding 模型</h4>
               <EmbeddingSection
                 providers={providers}
