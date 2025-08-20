@@ -47,6 +47,8 @@ function EndpointCard({
   const [embApiKey, setEmbApiKey] = useState(embeddingData?.api_key || '')
   const [embBaseUrl, setEmbBaseUrl] = useState(embeddingData?.base_url || '')
   const [embDim, setEmbDim] = useState(embeddingData?.dim?.toString() || '1024')
+  const [embModels, setEmbModels] = useState<string[]>([])
+  const [embLoadingModels, setEmbLoadingModels] = useState(false)
 
   const currentProvider = providers.find(p => p.key === provider)
   const needsKey = currentProvider?.needs_key ?? true
@@ -72,9 +74,27 @@ function EndpointCard({
     }
   }, [])
 
+  const fetchEmbModels = useCallback(async (p: string, key: string, url: string) => {
+    setEmbLoadingModels(true)
+    try {
+      const res = await api.listModels({ provider: p, api_key: key || null, base_url: url || null })
+      setEmbModels(res.models)
+      if (res.models.length > 0) {
+        setEmbModel(prev => res.models.includes(prev) ? prev : res.models[0])
+      }
+    } catch {
+      setEmbModels([])
+    } finally {
+      setEmbLoadingModels(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (endpoint.api_key || !needsKey) {
       fetchModels(endpoint.provider, endpoint.api_key || '', endpoint.base_url || '')
+    }
+    if (embeddingData?.api_key) {
+      fetchEmbModels(embeddingData.provider, embeddingData.api_key, embeddingData.base_url || '')
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -204,7 +224,13 @@ function EndpointCard({
               <label className="text-sm font-medium mb-1.5 block">Provider</label>
               <select
                 value={embProvider}
-                onChange={e => setEmbProvider(e.target.value)}
+                onChange={e => {
+                  const p = e.target.value
+                  setEmbProvider(p)
+                  setEmbModels([])
+                  setEmbModel('')
+                  fetchEmbModels(p, embApiKey, embBaseUrl)
+                }}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 {providers.map(p => (
@@ -232,12 +258,36 @@ function EndpointCard({
               </div>
             )}
             <div>
-              <label className="text-sm font-medium mb-1.5 block">Model</label>
-              <Input
-                value={embModel}
-                onChange={e => setEmbModel(e.target.value)}
-                placeholder="如 bge-large-zh-v1.5、text-embedding-3-small"
-              />
+              <div className="flex items-center gap-2 mb-1.5">
+                <label className="text-sm font-medium">Model</label>
+                <button
+                  type="button"
+                  onClick={() => fetchEmbModels(embProvider, embApiKey, embBaseUrl)}
+                  disabled={embLoadingModels}
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                  title="刷新模型列表"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${embLoadingModels ? 'animate-spin' : ''}`} />
+                  {embLoadingModels ? '加载中' : '刷新'}
+                </button>
+              </div>
+              {embModels.length > 0 ? (
+                <select
+                  value={embModel}
+                  onChange={e => setEmbModel(e.target.value)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {embModels.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              ) : (
+                <Input
+                  value={embModel}
+                  onChange={e => setEmbModel(e.target.value)}
+                  placeholder="如 bge-large-zh-v1.5、text-embedding-3-small"
+                />
+              )}
             </div>
             <div>
               <label className="text-sm font-medium mb-1.5 block">维度</label>
@@ -498,6 +548,7 @@ export default function SettingsPage() {
           description="用于知识库检索和文档信息提取"
           endpoint={knowledge}
           providers={providers}
+          showTest
           embeddingData={embedding}
           onSave={async (ep, emb) => {
             await api.saveSettings({ knowledge: ep, embedding: emb })
