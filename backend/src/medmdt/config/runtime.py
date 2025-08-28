@@ -10,16 +10,16 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "config" / 
 
 @dataclass
 class LLMEndpoint:
-    provider: str = "deepseek"
-    model: str = "deepseek-chat"
+    provider: str = ""
+    model: str = ""
     api_key: str | None = None
     base_url: str | None = None
 
 
 @dataclass
 class EmbeddingEndpoint:
-    provider: str = "openai"
-    model: str = "bge-large-zh-v1.5"
+    provider: str = ""
+    model: str = ""
     api_key: str | None = None
     base_url: str | None = None
     dim: int = 1024
@@ -53,8 +53,8 @@ def load_llm_settings() -> LLMSettings:
     # Migrate old flat format
     if "provider" in data and "consultation" not in data:
         endpoint = LLMEndpoint(
-            provider=data.get("provider", "deepseek"),
-            model=data.get("model", "deepseek-chat"),
+            provider=data.get("provider", ""),
+            model=data.get("model", ""),
             api_key=data.get("api_key"),
             base_url=data.get("base_url"),
         )
@@ -77,16 +77,16 @@ def load_llm_settings() -> LLMSettings:
 
     def _parse_endpoint(d: dict) -> LLMEndpoint:
         return LLMEndpoint(
-            provider=d.get("provider", "deepseek"),
-            model=d.get("model", "deepseek-chat"),
+            provider=d.get("provider", ""),
+            model=d.get("model", ""),
             api_key=d.get("api_key"),
             base_url=d.get("base_url"),
         )
 
     def _parse_embedding(d: dict) -> EmbeddingEndpoint:
         return EmbeddingEndpoint(
-            provider=d.get("provider", "openai"),
-            model=d.get("model", "bge-large-zh-v1.5"),
+            provider=d.get("provider", ""),
+            model=d.get("model", ""),
             api_key=d.get("api_key"),
             base_url=d.get("base_url"),
             dim=d.get("dim", 1024),

@@ -227,9 +227,7 @@ function EmbeddingSection({
   }, [])
 
   useEffect(() => {
-    if (embeddingData.api_key) {
-      fetchModels(embeddingData.provider, embeddingData.api_key, embeddingData.base_url || '')
-    }
+    fetchModels(embeddingData.provider, embeddingData.api_key || '', embeddingData.base_url || '')
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const getEmb = (): EmbeddingData => ({
@@ -253,7 +251,7 @@ function EmbeddingSection({
     setTesting(true)
     setMessage(null)
     try {
-      const res = await api.testConnection({ provider, model, api_key: apiKey || null, base_url: baseUrl || null })
+      const res = await api.testEmbeddingConnection({ provider, model, api_key: apiKey || null, base_url: baseUrl || null })
       setMessage({ type: 'success', text: res.message })
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : '连接失败' })
@@ -524,7 +522,7 @@ export default function SettingsPage() {
   const [consultation, setConsultation] = useState<EndpointData>({ provider: 'deepseek', model: 'deepseek-chat', api_key: null, base_url: null })
   const [knowledge, setKnowledge] = useState<EndpointData>({ provider: 'deepseek', model: 'deepseek-chat', api_key: null, base_url: null })
   const [vision, setVision] = useState<EndpointData>({ provider: 'deepseek', model: 'deepseek-chat', api_key: null, base_url: null })
-  const [embedding, setEmbedding] = useState<EmbeddingData>({ provider: 'openai', model: 'bge-large-zh-v1.5', api_key: null, base_url: null, dim: 1024 })
+  const [embedding, setEmbedding] = useState<EmbeddingData>({ provider: '', model: '', api_key: null, base_url: null, dim: 1024 })
   const [experts, setExperts] = useState<Record<string, ExpertLLMData>>({})
   const [expertNames, setExpertNames] = useState<Record<string, string>>({})
   const [paddleocrToken, setPaddleocrToken] = useState('')

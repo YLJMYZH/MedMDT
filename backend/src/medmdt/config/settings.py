@@ -23,8 +23,6 @@ class Settings(BaseSettings):
     mdt_max_rounds: int = 3
     mdt_consensus_threshold: float = 0.8
 
-    embedding_model: str = "bge-large-zh-v1.5"
-    embedding_dim: int = 1024
 
 
 @lru_cache

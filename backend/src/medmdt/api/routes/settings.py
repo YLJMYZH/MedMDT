@@ -13,7 +13,7 @@ from medmdt.config.runtime import (
     save_llm_settings,
     mask_api_key,
 )
-from medmdt.llm.provider import create_chat_model, PROVIDER_REGISTRY, _OPENAI_COMPAT_URLS
+from medmdt.llm.provider import create_chat_model, PROVIDER_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +31,15 @@ PROVIDERS = [
 
 
 class EndpointData(BaseModel):
-    provider: str = "deepseek"
-    model: str = "deepseek-chat"
+    provider: str = ""
+    model: str = ""
     api_key: str | None = None
     base_url: str | None = None
 
 
 class EmbeddingData(BaseModel):
-    provider: str = "openai"
-    model: str = "bge-large-zh-v1.5"
+    provider: str = ""
+    model: str = ""
     api_key: str | None = None
     base_url: str | None = None
     dim: int = 1024
@@ -210,9 +210,43 @@ def test_connection(body: TestRequest):
         raise HTTPException(status_code=400, detail=f"连接失败: {str(e)}")
 
 
+@router.post("/test-embedding")
+def test_embedding_connection(body: TestRequest):
+    api_key = body.api_key
+    if api_key and "****" in api_key:
+        current = load_llm_settings()
+        api_key = current.embedding.api_key
+
+    base_url = body.base_url or _PROVIDER_BASE_URLS.get(body.provider)
+    if not base_url:
+        raise HTTPException(status_code=400, detail="需要提供 Base URL")
+
+    url = f"{base_url.rstrip('/')}/embeddings"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        resp = http_requests.post(
+            url, headers=headers, timeout=15,
+            json={"model": body.model, "input": "连接测试"},
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        if data and "embedding" in data[0]:
+            dim = len(data[0]["embedding"])
+            return {"status": "ok", "message": f"连接成功，向量维度: {dim}"}
+        return {"status": "ok", "message": "连接成功"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"连接失败: {str(e)}")
+
+
 _PROVIDER_BASE_URLS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
-    **_OPENAI_COMPAT_URLS,
+    "deepseek": "https://api.deepseek.com/v1",
+    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+    "moonshot": "https://api.moonshot.cn/v1",
 }
 
 
@@ -246,35 +280,45 @@ def list_embedding_models(body: ModelsRequest):
         current = load_llm_settings()
         api_key = current.embedding.api_key
 
+    if body.provider == "anthropic":
+        return {"models": []}
+
+    if body.provider == "qwen":
+        return _fetch_dashscope_embedding_models(api_key)
+
     base_url = body.base_url or _PROVIDER_BASE_URLS.get(body.provider)
     if not base_url:
         raise HTTPException(status_code=400, detail="需要提供 Base URL")
 
-    return _fetch_embedding_models(base_url, api_key)
+    return _fetch_openai_compat_models(base_url, api_key)
 
 
-def _fetch_embedding_models(base_url: str, api_key: str | None) -> dict:
-    url = f"{base_url.rstrip('/')}/models"
-    headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+def _fetch_dashscope_embedding_models(api_key: str | None) -> dict:
+    """Fetch models from DashScope native API (paginated)."""
+    if not api_key:
+        raise HTTPException(status_code=400, detail="需要 API Key")
+    headers = {"Authorization": f"Bearer {api_key}"}
+    models = []
+    page = 1
     try:
-        resp = http_requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json().get("data", [])
-        models = []
-        for item in data:
-            if "id" not in item:
-                continue
-            model_id = item["id"]
-            obj_type = item.get("object", "")
-            owned_by = item.get("owned_by", "")
-            if (
-                "embed" in model_id.lower()
-                or obj_type == "embedding"
-                or "embedding" in owned_by.lower()
-            ):
-                models.append(model_id)
+        while True:
+            resp = http_requests.get(
+                f"https://dashscope.aliyuncs.com/api/v1/models?page_size=100&page_no={page}",
+                headers=headers, timeout=15,
+            )
+            resp.raise_for_status()
+            output = resp.json().get("output", {})
+            items = output.get("models", [])
+            if not items:
+                break
+            for item in items:
+                mid = item.get("model", "")
+                if mid:
+                    models.append(mid)
+            total = output.get("total", 0)
+            if page * 100 >= total:
+                break
+            page += 1
         return {"models": sorted(models)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"获取模型列表失败: {str(e)}")
