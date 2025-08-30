@@ -11,6 +11,7 @@ wheels/
 
 # Node
 node_modules/
+*.tsbuildinfo
 
 # OS files
 .DS_Store
@@ -23,3 +24,7 @@ node_modules/
 
 # Secrets / local config (contains API keys)
 backend/config/llm_settings.json
+
+# Runtime logs / pids (make start)
+.logs/
+.pids/
