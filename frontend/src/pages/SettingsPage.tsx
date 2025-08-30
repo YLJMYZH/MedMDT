@@ -38,6 +38,11 @@ function LLMSection({
   const needsBaseUrl = currentProvider?.needs_base_url ?? false
 
   const fetchModels = useCallback(async (p: string, key: string, url: string) => {
+    if (!p) {
+      setModels([])
+      setModelsError('请先选择 Provider')
+      return
+    }
     setLoadingModels(true)
     setModelsError(null)
     try {
@@ -103,6 +108,7 @@ function LLMSection({
           }}
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         >
+          <option value="" disabled>请选择</option>
           {providers.map(p => (
             <option key={p.key} value={p.key}>{p.label}</option>
           ))}
@@ -212,6 +218,10 @@ function EmbeddingSection({
   const needsBaseUrl = currentProvider?.needs_base_url ?? false
 
   const fetchModels = useCallback(async (p: string, key: string, url: string) => {
+    if (!p) {
+      setModels([])
+      return
+    }
     setLoadingModels(true)
     try {
       const res = await api.listEmbeddingModels({ provider: p, api_key: key || null, base_url: url || null })
@@ -275,6 +285,7 @@ function EmbeddingSection({
           }}
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         >
+          <option value="" disabled>请选择</option>
           {providers.map(p => (
             <option key={p.key} value={p.key}>{p.label}</option>
           ))}
