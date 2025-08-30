@@ -4,7 +4,10 @@ Usage:
     python scripts/server.py [--host HOST] [--port PORT]
 """
 import argparse
+import os
 import uvicorn
+
+SRC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 
 
 def main():
@@ -19,6 +22,7 @@ def main():
         host=args.host,
         port=args.port,
         reload=args.reload,
+        reload_dirs=[SRC_DIR],
     )
 
 

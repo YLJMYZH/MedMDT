@@ -39,13 +39,14 @@ def build_infrastructure() -> dict:
         **get_llm_kwargs(vision_ep),
     )
 
+    embed_ep = runtime.embedding
+
     graph_store = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
     vector_store = VectorStore(
         settings.milvus_host, settings.milvus_port, "medmdt_chunks", embed_ep.dim,
     )
     keyword_store = KeywordStore(settings.elasticsearch_url)
 
-    embed_ep = runtime.embedding
     embed_kwargs = {}
     if embed_ep.api_key:
         embed_kwargs["api_key"] = embed_ep.api_key
