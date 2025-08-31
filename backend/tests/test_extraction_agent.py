@@ -120,6 +120,28 @@ def test_process_dicom_requires_vision(settings, mock_deps):
 
 
 @patch("medmdt.extractor.agent.PaddleOCRClient")
+def test_process_text_only_pdf_succeeds_without_vision(
+    mock_ocr_cls, settings, mock_deps
+):
+    graph, vector, keyword, embed_fn, text_llm = mock_deps
+    _mock_llm_responses(text_llm)
+    graph.upsert_entities.return_value = 1
+    graph.upsert_relations.return_value = 1
+    vector.insert.return_value = [1]
+    keyword.index_chunks.return_value = 1
+    mock_ocr_cls.return_value.parse.return_value = [
+        ParsedPage(page_num=0, markdown="# 糖尿病指南", images=[])
+    ]
+    agent = _agent_without_vision(settings, mock_deps)
+
+    reports = agent.process_file("text-only.pdf")
+
+    assert len(reports) == 1
+    assert isinstance(reports[0], IngestReport)
+    assert text_llm.invoke.call_count == 2
+
+
+@patch("medmdt.extractor.agent.PaddleOCRClient")
 def test_process_pdf_file(mock_ocr_cls, settings, mock_deps):
     graph, vector, keyword, embed_fn, llm = mock_deps
     _mock_llm_responses(llm)

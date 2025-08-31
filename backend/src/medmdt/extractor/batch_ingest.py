@@ -14,6 +14,8 @@ import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from medmdt.llm.errors import VisionError
+
 SUPPORTED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".dcm", ".dicom"}
 ARCHIVE_EXTENSIONS = {".zip", ".tar", ".gz", ".tgz", ".bz2", ".rar", ".7z"}
 MAX_EXTRACTED_SIZE = 2 * 1024 * 1024 * 1024  # 2GB bomb protection
@@ -166,6 +168,8 @@ def _process_single_folder(folder: Path, agent) -> FolderResult:
         try:
             agent.process_file(str(f))
             processed += 1
+        except VisionError:
+            raise
         except Exception:
             failed += 1
 

@@ -1,4 +1,5 @@
 import asyncio
+import zipfile
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -69,6 +70,45 @@ def test_build_infrastructure_keeps_running_when_legacy_vision_is_unsupported(
     assert infra["vision_error"] == "DeepSeek 暂不支持图像理解"
 
 
+@patch("medmdt.config.settings.get_settings")
+@patch("medmdt.config.runtime.load_llm_settings")
+@patch("medmdt.llm.provider.create_vision_model")
+@patch("medmdt.llm.provider.create_chat_model")
+def test_build_infrastructure_propagates_non_provider_vision_errors(
+    chat_factory,
+    vision_factory,
+    load_runtime,
+    get_settings,
+):
+    from medmdt.api.deps import build_infrastructure
+
+    get_settings.return_value = MagicMock()
+    load_runtime.return_value = SimpleNamespace(
+        knowledge=SimpleNamespace(
+            provider="openai", model="text", api_key="k", base_url=None
+        ),
+        vision=SimpleNamespace(
+            provider="qwen", model="qwen-vl-max", api_key="k", base_url=None
+        ),
+        embedding=SimpleNamespace(
+            provider="openai",
+            model="embed",
+            api_key="k",
+            base_url=None,
+            dim=3,
+        ),
+    )
+    chat_factory.return_value = MagicMock()
+
+    for error in (
+        ValueError("invalid vision configuration"),
+        VisionRequestError("视觉服务暂不可用"),
+    ):
+        vision_factory.side_effect = error
+        with pytest.raises(type(error), match=str(error)):
+            build_infrastructure()
+
+
 def _infra(vision_llm=None):
     return {
         "settings": MagicMock(),
@@ -128,6 +168,44 @@ def test_run_ingest_logs_only_safe_metadata_for_vision_errors(
     record = caplog.records[-1]
     assert record.getMessage() == (
         "Vision ingest failed job_id=job-safe provider=deepseek "
+        "model=deepseek-chat error_type=VisionRequestError"
+    )
+    assert record.exc_info is None
+    assert "secret-key" not in caplog.text
+    assert "patient-secret" not in caplog.text
+    assert "secret-image-bytes" not in caplog.text
+    assert "clinical context" not in caplog.text
+
+
+@patch("medmdt.extractor.agent.ExtractionAgent")
+@patch("medmdt.api.deps.build_infrastructure")
+def test_run_batch_ingest_propagates_vision_error_from_real_archive(
+    build_infrastructure, agent_cls, tmp_path, caplog
+):
+    from medmdt.api.routes.knowledge import _ingest_jobs, _run_batch_ingest
+
+    infra = _infra()
+    infra["settings"].api_key = "secret-key"
+    build_infrastructure.return_value = infra
+    stable_error = "视觉服务暂不可用（clinical context）"
+    agent_cls.return_value.process_file.side_effect = VisionRequestError(stable_error)
+    archive_path = tmp_path / "patient-secret.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("patient-a/scan.png", b"secret-image-bytes")
+    _ingest_jobs["batch-safe"] = {
+        "status": "queued",
+        "progress": {"current": 0, "total": 0},
+        "folders": [],
+    }
+    caplog.set_level("WARNING", logger="medmdt.api.routes.knowledge")
+
+    _run_batch_ingest("batch-safe", str(archive_path))
+
+    assert _ingest_jobs["batch-safe"]["status"] == "failed"
+    assert _ingest_jobs["batch-safe"]["message"] == stable_error
+    record = caplog.records[-1]
+    assert record.getMessage() == (
+        "Vision batch ingest failed job_id=batch-safe provider=deepseek "
         "model=deepseek-chat error_type=VisionRequestError"
     )
     assert record.exc_info is None
