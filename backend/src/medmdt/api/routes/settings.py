@@ -1,7 +1,10 @@
 import logging
+import uuid
+from io import BytesIO
 
 import requests as http_requests
 from fastapi import APIRouter, HTTPException
+from PIL import Image
 from pydantic import BaseModel
 
 from medmdt.config.runtime import (
@@ -13,21 +16,19 @@ from medmdt.config.runtime import (
     save_llm_settings,
     mask_api_key,
 )
-from medmdt.llm.provider import create_chat_model, PROVIDER_REGISTRY
+from medmdt.extractor.parsers.image_parser import ImageParser
+from medmdt.llm.errors import VisionError
+from medmdt.llm.provider import (
+    PROVIDER_REGISTRY,
+    create_chat_model,
+    create_vision_model,
+    get_provider_base_url,
+    list_provider_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
-
-PROVIDERS = [
-    {"key": "openai", "label": "OpenAI", "needs_key": True},
-    {"key": "anthropic", "label": "Anthropic", "needs_key": True},
-    {"key": "deepseek", "label": "DeepSeek", "needs_key": True},
-    {"key": "qwen", "label": "Qwen (通义千问)", "needs_key": True},
-    {"key": "zhipu", "label": "ZhiPu (智谱)", "needs_key": True},
-    {"key": "moonshot", "label": "Moonshot (月之暗面)", "needs_key": True},
-    {"key": "custom", "label": "自定义 (OpenAI 兼容)", "needs_key": True, "needs_base_url": True},
-]
 
 
 class EndpointData(BaseModel):
@@ -122,7 +123,7 @@ def get_settings():
         experts=experts_data,
         expert_names=expert_names,
         paddleocr_token=mask_api_key(settings.paddleocr_token),
-        providers=PROVIDERS,
+        providers=list_provider_metadata(),
     )
 
 
@@ -135,6 +136,16 @@ def _resolve_key(new_key: str | None, current_key: str | None) -> str | None:
 @router.put("")
 def update_settings(body: SettingsUpdate):
     current = load_llm_settings()
+
+    if body.vision is not None:
+        spec = PROVIDER_REGISTRY.get(body.vision.provider)
+        if spec is None:
+            raise HTTPException(status_code=400, detail="不支持的视觉 provider")
+        if spec.vision_status == "unavailable":
+            raise HTTPException(
+                status_code=400,
+                detail=f"{spec.label} 官方 API 暂不支持图像理解",
+            )
 
     def _update_endpoint(new: EndpointData | None, cur: LLMEndpoint) -> LLMEndpoint:
         if not new:
@@ -210,6 +221,64 @@ def test_connection(body: TestRequest):
         raise HTTPException(status_code=400, detail=f"连接失败: {str(e)}")
 
 
+def _vision_test_png() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (32, 32), color="red").save(output, format="PNG")
+    return output.getvalue()
+
+
+@router.post("/test-vision")
+def test_vision_connection(body: TestRequest):
+    request_id = uuid.uuid4().hex[:12]
+    spec = PROVIDER_REGISTRY.get(body.provider)
+    if spec is None:
+        raise HTTPException(status_code=400, detail="不支持的视觉 provider")
+    if spec.vision_status == "unavailable":
+        raise HTTPException(
+            status_code=400,
+            detail=f"{spec.label} 官方 API 暂不支持图像理解",
+        )
+
+    api_key = body.api_key
+    if api_key and "****" in api_key:
+        api_key = load_llm_settings().vision.api_key
+
+    kwargs = {}
+    if api_key:
+        kwargs["api_key"] = api_key
+    if body.base_url:
+        kwargs["base_url"] = body.base_url
+
+    try:
+        llm = create_vision_model(body.provider, body.model, **kwargs)
+        result = ImageParser(llm).analyze(
+            _vision_test_png(),
+            context="视觉连接测试图片；请按要求返回结构化 JSON。",
+        )
+        return {
+            "status": "ok",
+            "message": f"图片能力测试成功: {result.description[:80]}",
+        }
+    except VisionError as exc:
+        logger.warning(
+            "Vision connection test failed request_id=%s provider=%s model=%s error_type=%s",
+            request_id,
+            body.provider,
+            body.model,
+            type(exc).__name__,
+        )
+        raise HTTPException(status_code=400, detail="图片能力测试失败") from None
+    except Exception as exc:
+        logger.warning(
+            "Vision connection test failed request_id=%s provider=%s model=%s error_type=%s",
+            request_id,
+            body.provider,
+            body.model,
+            type(exc).__name__,
+        )
+        raise HTTPException(status_code=400, detail="图片能力测试失败") from None
+
+
 @router.post("/test-embedding")
 def test_embedding_connection(body: TestRequest):
     api_key = body.api_key
@@ -217,7 +286,9 @@ def test_embedding_connection(body: TestRequest):
         current = load_llm_settings()
         api_key = current.embedding.api_key
 
-    base_url = body.base_url or _PROVIDER_BASE_URLS.get(body.provider)
+    if body.provider not in PROVIDER_REGISTRY:
+        raise HTTPException(status_code=400, detail="不支持的 provider")
+    base_url = body.base_url or get_provider_base_url(body.provider)
     if not base_url:
         raise HTTPException(status_code=400, detail="需要提供 Base URL")
 
@@ -241,15 +312,6 @@ def test_embedding_connection(body: TestRequest):
         raise HTTPException(status_code=400, detail=f"连接失败: {str(e)}")
 
 
-_PROVIDER_BASE_URLS: dict[str, str] = {
-    "openai": "https://api.openai.com/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
-    "moonshot": "https://api.moonshot.cn/v1",
-}
-
-
 class ModelsRequest(BaseModel):
     provider: str
     api_key: str | None = None
@@ -263,10 +325,13 @@ def list_models(body: ModelsRequest):
         current = load_llm_settings()
         api_key = current.consultation.api_key
 
+    if body.provider not in PROVIDER_REGISTRY:
+        raise HTTPException(status_code=400, detail="不支持的 provider")
+
     if body.provider == "anthropic":
         return _fetch_anthropic_models(api_key)
 
-    base_url = body.base_url or _PROVIDER_BASE_URLS.get(body.provider)
+    base_url = body.base_url or get_provider_base_url(body.provider)
     if not base_url:
         raise HTTPException(status_code=400, detail="需要提供 Base URL")
 
@@ -280,13 +345,16 @@ def list_embedding_models(body: ModelsRequest):
         current = load_llm_settings()
         api_key = current.embedding.api_key
 
+    if body.provider not in PROVIDER_REGISTRY:
+        raise HTTPException(status_code=400, detail="不支持的 provider")
+
     if body.provider == "anthropic":
         return {"models": []}
 
     if body.provider == "qwen":
         return _fetch_dashscope_embedding_models(api_key)
 
-    base_url = body.base_url or _PROVIDER_BASE_URLS.get(body.provider)
+    base_url = body.base_url or get_provider_base_url(body.provider)
     if not base_url:
         raise HTTPException(status_code=400, detail="需要提供 Base URL")
 
