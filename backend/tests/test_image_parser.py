@@ -230,6 +230,41 @@ def test_transmission_size_limit_does_not_resize():
     llm.invoke.assert_not_called()
 
 
+def test_pixel_limit_rejects_oversized_dimensions_before_decode(monkeypatch):
+    llm = MagicMock()
+    payload = image_bytes("PNG")
+    real_open = Image.open
+    opened = []
+
+    def tracking_open(*args, **kwargs):
+        image = real_open(*args, **kwargs)
+        opened.append(image)
+        return image
+
+    monkeypatch.setattr(Image, "open", tracking_open)
+
+    with pytest.raises(InvalidImageError, match="像素") as exc_info:
+        ImageParser(llm, max_image_pixels=32).analyze(payload)
+
+    assert len(opened) == 1
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
+    llm.invoke.assert_not_called()
+
+
+@pytest.mark.parametrize("pillow_limit", [40, 20], ids=["warning", "error"])
+def test_pillow_decompression_bomb_is_sanitized(monkeypatch, pillow_limit):
+    llm = MagicMock()
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", pillow_limit)
+
+    with pytest.raises(InvalidImageError, match="像素") as exc_info:
+        ImageParser(llm, max_image_pixels=1_000).analyze(image_bytes("PNG"))
+
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
+    llm.invoke.assert_not_called()
+
+
 def test_content_block_response_is_normalized_to_text():
     llm = MagicMock()
     llm.invoke.return_value = AIMessage(content=[
@@ -261,6 +296,25 @@ def test_second_invalid_json_raises_stable_error():
     with pytest.raises(InvalidVisionResponse) as exc_info:
         ImageParser(llm).analyze(image_bytes("PNG"))
     assert llm.invoke.call_count == 2
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"findings":[],"modality":null}',
+        '{"description":123,"findings":"not-a-list","modality":null}',
+    ],
+)
+def test_valid_json_with_schema_errors_is_not_retried(content):
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(content=content)
+
+    with pytest.raises(InvalidVisionResponse) as exc_info:
+        ImageParser(llm).analyze(image_bytes("PNG"))
+
+    assert llm.invoke.call_count == 1
     assert exc_info.value.__context__ is None
     assert exc_info.value.__cause__ is None
 

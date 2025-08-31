@@ -20,8 +20,9 @@ from medmdt.knowledge.vector_store import VectorStore
 from medmdt.knowledge.keyword_store import KeywordStore
 from medmdt.extractor.agent import ExtractionAgent
 from medmdt.extractor.ingestor import IngestReport
+from medmdt.extractor.file_types import MEDICAL_FILE_EXTENSIONS
 
-SUPPORTED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".dcm"}
+SUPPORTED_EXTENSIONS = MEDICAL_FILE_EXTENSIONS
 
 
 def build_agent() -> ExtractionAgent:

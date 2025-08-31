@@ -14,18 +14,21 @@ interface Message {
 function LLMSection({
   providers,
   endpoint,
+  credentialScope,
   testMode,
   onSave,
 }: {
   providers: ProviderInfo[]
   endpoint: EndpointData
+  credentialScope: 'consultation' | 'knowledge' | 'vision'
   testMode?: 'text' | 'vision'
   onSave: (ep: EndpointData) => Promise<void>
 }) {
   const [provider, setProvider] = useState(endpoint.provider)
   const [model, setModel] = useState(endpoint.model)
   const [apiKey, setApiKey] = useState(endpoint.api_key || '')
-  const [baseUrl, setBaseUrl] = useState(endpoint.base_url || '')
+  const initialNeedsBaseUrl = providers.find(p => p.key === endpoint.provider)?.needs_base_url ?? false
+  const [baseUrl, setBaseUrl] = useState(initialNeedsBaseUrl ? endpoint.base_url || '' : '')
   const [models, setModels] = useState<string[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
@@ -34,6 +37,7 @@ function LLMSection({
   const [message, setMessage] = useState<Message | null>(null)
   const [visionVerified, setVisionVerified] = useState(false)
   const visionConfigGeneration = useRef(0)
+  const modelRequestGeneration = useRef(0)
   const modelRef = useRef(endpoint.model)
 
   const currentProvider = providers.find(p => p.key === provider)
@@ -51,15 +55,23 @@ function LLMSection({
   }, [isVision])
 
   const fetchModels = useCallback(async (p: string, key: string, url: string) => {
+    const requestGeneration = ++modelRequestGeneration.current
     if (!p) {
       setModels([])
       setModelsError('请先选择 Provider')
+      setLoadingModels(false)
       return
     }
     setLoadingModels(true)
     setModelsError(null)
     try {
-      const res = await api.listModels({ provider: p, api_key: key || null, base_url: url || null })
+      const res = await api.listModels({
+        provider: p,
+        api_key: key || null,
+        base_url: url || null,
+        credential_scope: credentialScope,
+      })
+      if (requestGeneration !== modelRequestGeneration.current) return
       setModels(res.models)
       if (res.models.length > 0) {
         const nextModel = res.models.includes(modelRef.current) ? modelRef.current : res.models[0]
@@ -70,20 +82,30 @@ function LLMSection({
         }
       }
     } catch (err) {
+      if (requestGeneration !== modelRequestGeneration.current) return
       setModels([])
       setModelsError(err instanceof Error ? err.message : '获取模型列表失败')
     } finally {
-      setLoadingModels(false)
+      if (requestGeneration === modelRequestGeneration.current) {
+        setLoadingModels(false)
+      }
     }
-  }, [invalidateVisionConfig])
+  }, [credentialScope, invalidateVisionConfig])
 
   useEffect(() => {
     if (endpoint.api_key || !needsKey) {
-      fetchModels(endpoint.provider, endpoint.api_key || '', endpoint.base_url || '')
+      fetchModels(
+        endpoint.provider,
+        endpoint.api_key || '',
+        initialNeedsBaseUrl ? endpoint.base_url || '' : '',
+      )
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const getEp = (): EndpointData => ({ provider, model, api_key: apiKey || null, base_url: baseUrl || null })
+  const getEp = (): EndpointData => {
+    const normalizedBaseUrl = needsBaseUrl ? baseUrl : ''
+    return { provider, model, api_key: apiKey || null, base_url: normalizedBaseUrl || null }
+  }
 
   const handleSave = async () => {
     setSaving(true)
@@ -100,6 +122,7 @@ function LLMSection({
 
   const handleTest = async () => {
     const testedGeneration = visionConfigGeneration.current
+    const normalizedBaseUrl = needsBaseUrl ? baseUrl : ''
     setTesting(true)
     setMessage(null)
     try {
@@ -107,7 +130,7 @@ function LLMSection({
         provider,
         model,
         api_key: apiKey || null,
-        base_url: baseUrl || null,
+        base_url: normalizedBaseUrl || null,
       }
       const res = isVision
         ? await api.testVisionConnection(payload)
@@ -137,7 +160,10 @@ function LLMSection({
             setModels([])
             modelRef.current = ''
             setModel('')
-            fetchModels(p, apiKey, baseUrl)
+            const targetProvider = providers.find(item => item.key === p)
+            const normalizedBaseUrl = targetProvider?.needs_base_url ? baseUrl : ''
+            setBaseUrl(normalizedBaseUrl)
+            fetchModels(p, apiKey, normalizedBaseUrl)
           }}
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         >
@@ -205,7 +231,7 @@ function LLMSection({
           <label className="text-sm font-medium">Model</label>
           <button
             type="button"
-            onClick={() => fetchModels(provider, apiKey, baseUrl)}
+            onClick={() => fetchModels(provider, apiKey, needsBaseUrl ? baseUrl : '')}
             disabled={loadingModels}
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             title="刷新模型列表"
@@ -577,6 +603,7 @@ function ConsultationCard({
         <LLMSection
           providers={providers}
           endpoint={endpoint}
+          credentialScope="consultation"
           testMode="text"
           onSave={onSaveEndpoint}
         />
@@ -678,6 +705,7 @@ export default function SettingsPage() {
             <LLMSection
               providers={providers}
               endpoint={knowledge}
+              credentialScope="knowledge"
               testMode="text"
               onSave={async (ep) => {
                 await api.saveSettings({ knowledge: ep })
@@ -706,6 +734,7 @@ export default function SettingsPage() {
             <LLMSection
               providers={providers}
               endpoint={vision}
+              credentialScope="vision"
               testMode="vision"
               onSave={async (ep) => {
                 await api.saveSettings({ vision: ep })

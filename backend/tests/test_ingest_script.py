@@ -85,6 +85,8 @@ def test_run_ingest_directory(mock_build, tmp_path):
 
     (tmp_path / "a.pdf").write_bytes(b"%PDF fake")
     (tmp_path / "b.pdf").write_bytes(b"%PDF fake")
+    (tmp_path / "scan.webp").write_bytes(b"webp")
+    (tmp_path / "scan.gif").write_bytes(b"gif")
     (tmp_path / "c.txt").write_text("not a pdf")
 
     mock_agent = MagicMock()
@@ -97,5 +99,12 @@ def test_run_ingest_directory(mock_build, tmp_path):
 
     results = run_ingest(str(tmp_path))
 
-    assert len(results) == 2
-    assert mock_agent.process_file.call_count == 2
+    assert len(results) == 4
+    assert mock_agent.process_file.call_count == 4
+
+
+def test_cli_extensions_share_backend_image_extensions():
+    from medmdt.extractor.file_types import IMAGE_EXTENSIONS
+    from scripts.ingest import SUPPORTED_EXTENSIONS
+
+    assert IMAGE_EXTENSIONS <= SUPPORTED_EXTENSIONS

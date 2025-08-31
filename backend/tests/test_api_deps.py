@@ -279,10 +279,14 @@ def test_run_batch_ingest_propagates_vision_error_from_real_archive(
     assert "clinical context" not in caplog.text
 
 
-@pytest.mark.parametrize("suffix", [".png", ".dcm"])
+@pytest.mark.parametrize("suffix", [".png", ".webp", ".gif", ".dcm"])
 def test_consultation_image_extraction_requires_vision(suffix):
-    from medmdt.api.routes.consultation import _extract_text_from_file
+    from medmdt.api.routes.consultation import (
+        SUPPORTED_EXTENSIONS,
+        _extract_text_from_file,
+    )
 
+    assert suffix in SUPPORTED_EXTENSIONS
     with pytest.raises(
         VisionProviderNotSupported, match="图片分析未配置可用的视觉模型"
     ):
@@ -317,8 +321,32 @@ def test_consultation_image_extraction_hides_unexpected_errors(
     image_path = tmp_path / "scan.png"
     image_path.write_bytes(b"image")
 
-    with pytest.raises(ValueError, match="^图片分析失败$"):
+    with pytest.raises(ValueError, match="^图片分析失败$") as exc_info:
         _extract_text_from_file(str(image_path), ".png", MagicMock(), MagicMock())
+
+    assert "raw SDK error" not in str(exc_info.value)
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
+
+
+@patch("medmdt.extractor.parsers.dicom_parser.DicomParser")
+def test_consultation_dicom_extraction_hides_unexpected_errors(
+    dicom_parser_cls, tmp_path
+):
+    from medmdt.api.routes.consultation import _extract_text_from_file
+
+    dicom_parser_cls.return_value.parse.side_effect = RuntimeError(
+        "sensitive DICOM patient metadata"
+    )
+    path = tmp_path / "scan.dcm"
+    path.write_bytes(b"dicom")
+
+    with pytest.raises(ValueError, match="^图片分析失败$") as exc_info:
+        _extract_text_from_file(str(path), ".dcm", MagicMock(), MagicMock())
+
+    assert "sensitive DICOM" not in str(exc_info.value)
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
 
 
 @patch("medmdt.api.deps.build_infrastructure")

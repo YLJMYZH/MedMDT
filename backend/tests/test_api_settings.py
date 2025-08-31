@@ -11,10 +11,15 @@ from medmdt.config.runtime import EmbeddingEndpoint, LLMEndpoint, LLMSettings
 from medmdt.llm.errors import VisionRequestError
 
 
-def _settings(*, vision: LLMEndpoint | None = None) -> LLMSettings:
+def _settings(
+    *,
+    consultation: LLMEndpoint | None = None,
+    knowledge: LLMEndpoint | None = None,
+    vision: LLMEndpoint | None = None,
+) -> LLMSettings:
     return LLMSettings(
-        consultation=LLMEndpoint(),
-        knowledge=LLMEndpoint(),
+        consultation=consultation or LLMEndpoint(),
+        knowledge=knowledge or LLMEndpoint(),
         vision=vision or LLMEndpoint(),
         embedding=EmbeddingEndpoint(),
     )
@@ -45,6 +50,34 @@ def test_cannot_save_new_deepseek_vision_configuration():
 
     assert response.status_code == 400
     assert "暂不支持图像理解" in response.json()["detail"]
+    save.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("vision", "detail"),
+    [
+        ({"provider": "", "model": "qwen-vl-max"}, "provider"),
+        ({"provider": "unknown", "model": "model"}, "provider"),
+        ({"provider": "qwen", "model": ""}, "model"),
+        ({"provider": "qwen", "model": "   "}, "model"),
+        ({"provider": "custom", "model": "vision", "base_url": ""}, "Base URL"),
+        ({"provider": "custom", "model": "vision", "base_url": "   "}, "Base URL"),
+    ],
+)
+def test_invalid_vision_configuration_is_rejected_without_persisting(vision, detail):
+    current = _settings(
+        vision=LLMEndpoint(provider="qwen", model="qwen-vl-max", api_key="saved")
+    )
+    with (
+        patch("medmdt.api.routes.settings.load_llm_settings", return_value=current),
+        patch("medmdt.api.routes.settings.save_llm_settings") as save,
+    ):
+        response = TestClient(create_app()).put(
+            "/api/v1/settings", json={"vision": vision}
+        )
+
+    assert response.status_code == 400
+    assert detail in response.json()["detail"]
     save.assert_not_called()
 
 
@@ -293,3 +326,44 @@ def test_model_listing_uses_registry_base_url(base_url, fetch_models):
     assert response.status_code == 200
     base_url.assert_called_once_with("openai")
     fetch_models.assert_called_once_with("https://registry.example/v1", None)
+
+
+@pytest.mark.parametrize(
+    ("scope", "expected_key"),
+    [
+        ("consultation", "consultation-secret"),
+        ("knowledge", "knowledge-secret"),
+        ("vision", "vision-secret"),
+    ],
+)
+@patch("medmdt.api.routes.settings._fetch_openai_compat_models")
+def test_masked_model_listing_key_uses_endpoint_scope(fetch_models, scope, expected_key):
+    fetch_models.return_value = {"models": []}
+    current = _settings(
+        consultation=LLMEndpoint(api_key="consultation-secret"),
+        knowledge=LLMEndpoint(api_key="knowledge-secret"),
+        vision=LLMEndpoint(api_key="vision-secret"),
+    )
+
+    with patch("medmdt.api.routes.settings.load_llm_settings", return_value=current):
+        response = TestClient(create_app()).post(
+            "/api/v1/settings/models",
+            json={
+                "provider": "openai",
+                "api_key": "mask****-key",
+                "base_url": "https://models.example/v1",
+                "credential_scope": scope,
+            },
+        )
+
+    assert response.status_code == 200
+    fetch_models.assert_called_once_with("https://models.example/v1", expected_key)
+
+
+def test_model_listing_rejects_unknown_credential_scope():
+    response = TestClient(create_app()).post(
+        "/api/v1/settings/models",
+        json={"provider": "openai", "credential_scope": "embedding"},
+    )
+
+    assert response.status_code == 422

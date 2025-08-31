@@ -15,6 +15,11 @@ from medmdt.api.models import (
 )
 from medmdt.api.deps import get_consultation_store
 from medmdt.llm.errors import VisionError, VisionProviderNotSupported
+from medmdt.extractor.file_types import (
+    DICOM_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    MEDICAL_FILE_EXTENSIONS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +130,7 @@ def get_consultation(
     )
 
 
-SUPPORTED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".dcm", ".dicom"}
+SUPPORTED_EXTENSIONS = MEDICAL_FILE_EXTENSIONS
 
 
 @router.post("/upload")
@@ -194,9 +199,10 @@ def _extract_text_from_file(file_path: str, suffix: str, settings, llm) -> str:
         pages = parser.parse(file_path)
         return "\n\n".join(p.markdown for p in pages if p.markdown)
 
-    elif suffix in (".jpg", ".jpeg", ".png", ".bmp", ".tiff"):
+    elif suffix in IMAGE_EXTENSIONS:
         if llm is None:
             raise VisionProviderNotSupported("图片分析未配置可用的视觉模型")
+        unexpected_error = False
         try:
             parser = ImageParser(llm=llm)
             with open(file_path, "rb") as f:
@@ -205,12 +211,15 @@ def _extract_text_from_file(file_path: str, suffix: str, settings, llm) -> str:
             return f"[影像分析]\n模态: {result.modality or '未知'}\n描述: {result.description}\n发现: {', '.join(result.findings)}"
         except VisionError:
             raise
-        except Exception as exc:
-            raise ValueError("图片分析失败") from exc
+        except Exception:
+            unexpected_error = True
+        if unexpected_error:
+            raise ValueError("图片分析失败")
 
-    elif suffix in (".dcm", ".dicom"):
+    elif suffix in DICOM_EXTENSIONS:
         if llm is None:
             raise VisionProviderNotSupported("图片分析未配置可用的视觉模型")
+        unexpected_error = False
         try:
             image_parser = ImageParser(llm=llm)
             parser = DicomParser(image_parser=image_parser)
@@ -218,8 +227,10 @@ def _extract_text_from_file(file_path: str, suffix: str, settings, llm) -> str:
             return result.raw_text
         except VisionError:
             raise
-        except Exception as exc:
-            raise ValueError("图片分析失败") from exc
+        except Exception:
+            unexpected_error = True
+        if unexpected_error:
+            raise ValueError("图片分析失败")
 
     return ""
 
@@ -227,7 +238,7 @@ def _extract_text_from_file(file_path: str, suffix: str, settings, llm) -> str:
 def _classify_file_type(suffix: str) -> str:
     if suffix == ".pdf":
         return "report"
-    elif suffix in (".dcm", ".dicom"):
+    elif suffix in DICOM_EXTENSIONS:
         return "dicom"
     else:
         return "image"

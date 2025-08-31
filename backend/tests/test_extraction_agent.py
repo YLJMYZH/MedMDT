@@ -218,6 +218,8 @@ def test_detect_file_type():
     assert agent_cls._detect_file_type("photo.jpg") == "image"
     assert agent_cls._detect_file_type("photo.png") == "image"
     assert agent_cls._detect_file_type("photo.jpeg") == "image"
+    assert agent_cls._detect_file_type("photo.webp") == "image"
+    assert agent_cls._detect_file_type("animation.gif") == "image"
 
 
 @patch("medmdt.extractor.agent.PaddleOCRClient")

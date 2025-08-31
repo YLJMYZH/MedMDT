@@ -123,7 +123,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  listModels: (data: { provider: string; api_key?: string | null; base_url?: string | null }) =>
+  listModels: (data: {
+    provider: string
+    api_key?: string | null
+    base_url?: string | null
+    credential_scope: 'consultation' | 'knowledge' | 'vision'
+  }) =>
     request<{ models: string[] }>('/api/v1/settings/models', {
       method: 'POST',
       body: JSON.stringify(data),

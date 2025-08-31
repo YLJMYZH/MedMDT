@@ -18,6 +18,7 @@ from medmdt.extractor.schemas import (
 from medmdt.extractor.parsers.pdf_parser import PaddleOCRClient
 from medmdt.extractor.parsers.image_parser import ImageParser
 from medmdt.extractor.parsers.dicom_parser import DicomParser
+from medmdt.extractor.file_types import DICOM_EXTENSIONS, IMAGE_EXTENSIONS
 from medmdt.extractor.ingestor import Ingestor, IngestReport
 from medmdt.knowledge.graph_store import GraphStore
 from medmdt.knowledge.vector_store import VectorStore
@@ -192,9 +193,9 @@ class ExtractionAgent:
         suffix = Path(file_path).suffix.lower()
         if suffix == ".pdf":
             return "pdf"
-        elif suffix in {".dcm", ".dicom"}:
+        elif suffix in DICOM_EXTENSIONS:
             return "dicom"
-        elif suffix in {".jpg", ".jpeg", ".png", ".bmp", ".tiff"}:
+        elif suffix in IMAGE_EXTENSIONS:
             return "image"
         else:
             raise ValueError(f"Unknown file extension: {suffix}")

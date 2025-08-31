@@ -1,6 +1,7 @@
 import logging
 import uuid
 from io import BytesIO
+from typing import Literal
 
 import requests as http_requests
 from fastapi import APIRouter, HTTPException
@@ -141,11 +142,15 @@ def update_settings(body: SettingsUpdate):
         spec = PROVIDER_REGISTRY.get(body.vision.provider)
         if spec is None:
             raise HTTPException(status_code=400, detail="不支持的视觉 provider")
+        if not body.vision.model.strip():
+            raise HTTPException(status_code=400, detail="视觉 model 不能为空")
         if spec.vision_status == "unavailable":
             raise HTTPException(
                 status_code=400,
                 detail=f"{spec.label} 官方 API 暂不支持图像理解",
             )
+        if spec.needs_base_url and not (body.vision.base_url or "").strip():
+            raise HTTPException(status_code=400, detail="视觉 Provider 需要提供 Base URL")
 
     def _update_endpoint(new: EndpointData | None, cur: LLMEndpoint) -> LLMEndpoint:
         if not new:
@@ -313,6 +318,7 @@ class ModelsRequest(BaseModel):
     provider: str
     api_key: str | None = None
     base_url: str | None = None
+    credential_scope: Literal["consultation", "knowledge", "vision"] = "consultation"
 
 
 @router.post("/models")
@@ -320,7 +326,7 @@ def list_models(body: ModelsRequest):
     api_key = body.api_key
     if api_key and "****" in api_key:
         current = load_llm_settings()
-        api_key = current.consultation.api_key
+        api_key = getattr(current, body.credential_scope).api_key
 
     if body.provider not in PROVIDER_REGISTRY:
         raise HTTPException(status_code=400, detail="不支持的 provider")

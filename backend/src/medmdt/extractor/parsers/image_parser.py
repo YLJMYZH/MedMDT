@@ -4,6 +4,7 @@
 import base64
 from io import BytesIO
 import re
+import warnings
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -19,6 +20,7 @@ from medmdt.llm.errors import (
 )
 
 DEFAULT_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+DEFAULT_MAX_IMAGE_PIXELS = 40_000_000
 DIRECT_IMAGE_MIME = {
     "PNG": "image/png",
     "JPEG": "image/jpeg",
@@ -45,31 +47,53 @@ class ImageAnalysisResult(BaseModel):
     modality: str | None = None
 
 
-def _prepare_image(image_data: bytes, max_image_bytes: int) -> tuple[bytes, str]:
+class _ImagePixelLimitExceeded(Exception):
+    pass
+
+
+def _prepare_image(
+    image_data: bytes,
+    max_image_bytes: int,
+    max_image_pixels: int,
+) -> tuple[bytes, str]:
     if not image_data:
         raise InvalidImageError("图片内容为空")
     invalid_image = False
+    pixel_limit_exceeded = False
     try:
-        with Image.open(BytesIO(image_data)) as image:
-            image_format = image.format
-            if image_format in DIRECT_IMAGE_MIME:
-                image.verify()
-                with Image.open(BytesIO(image_data)) as decoded_image:
-                    decoded_image.load()
-                normalized = image_data
-                mime_type = DIRECT_IMAGE_MIME[image_format]
-            else:
-                image.load()
-                if image.mode not in PNG_COMPATIBLE_MODES:
-                    target_mode = "RGBA" if "A" in image.getbands() else "RGB"
-                    image = image.convert(target_mode)
-                output = BytesIO()
-                image.save(output, format="PNG")
-                normalized = output.getvalue()
-                mime_type = "image/png"
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(image_data)) as image:
+                width, height = image.size
+                if width * height > max_image_pixels:
+                    raise _ImagePixelLimitExceeded
+                image_format = image.format
+                if image_format in DIRECT_IMAGE_MIME:
+                    image.verify()
+                    with Image.open(BytesIO(image_data)) as decoded_image:
+                        decoded_image.load()
+                    normalized = image_data
+                    mime_type = DIRECT_IMAGE_MIME[image_format]
+                else:
+                    image.load()
+                    if image.mode not in PNG_COMPATIBLE_MODES:
+                        target_mode = "RGBA" if "A" in image.getbands() else "RGB"
+                        image = image.convert(target_mode)
+                    output = BytesIO()
+                    image.save(output, format="PNG")
+                    normalized = output.getvalue()
+                    mime_type = "image/png"
+    except (
+        _ImagePixelLimitExceeded,
+        Image.DecompressionBombWarning,
+        Image.DecompressionBombError,
+    ):
+        pixel_limit_exceeded = True
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError):
         invalid_image = True
 
+    if pixel_limit_exceeded:
+        raise InvalidImageError(f"图片超过 {max_image_pixels} 像素安全限制")
     if invalid_image:
         raise InvalidImageError("图片损坏或格式无法识别")
 
@@ -129,9 +153,11 @@ class ImageParser:
         self,
         llm: BaseChatModel,
         max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
+        max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
     ):
         self._llm = llm
         self._max_image_bytes = max_image_bytes
+        self._max_image_pixels = max_image_pixels
 
     def analyze(
         self, image_data: bytes, context: str = ""
@@ -145,7 +171,11 @@ class ImageParser:
         Returns:
             Structured ImageAnalysisResult.
         """
-        normalized, mime_type = _prepare_image(image_data, self._max_image_bytes)
+        normalized, mime_type = _prepare_image(
+            image_data,
+            self._max_image_bytes,
+            self._max_image_pixels,
+        )
         for attempt in range(2):
             prompt = self._build_prompt(context)
             if attempt == 1:
@@ -155,8 +185,12 @@ class ImageParser:
             raw = _extract_response_text(response.content)
             try:
                 return self._parse_response(raw)
-            except ValidationError:
-                pass
+            except ValidationError as exc:
+                invalid_json = any(
+                    error["type"] == "json_invalid" for error in exc.errors()
+                )
+            if not invalid_json or attempt == 1:
+                break
         raise InvalidVisionResponse("视觉模型未返回有效的结构化 JSON")
 
     def analyze_batch(

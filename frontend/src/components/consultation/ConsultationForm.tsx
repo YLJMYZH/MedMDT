@@ -139,7 +139,7 @@ export default function ConsultationForm({ onSubmit, isSubmitting }: Props) {
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".pdf,.jpg,.jpeg,.png,.bmp,.tiff,.dcm"
+              accept=".pdf,.jpg,.jpeg,.png,.bmp,.tiff,.webp,.gif,.dcm,.dicom"
               onChange={handleFileUpload}
               className="hidden"
             />
@@ -147,7 +147,7 @@ export default function ConsultationForm({ onSubmit, isSubmitting }: Props) {
               {isUploading ? '正在解析文件...' : '点击或拖拽上传 PDF / 图片 / DICOM 文件'}
             </p>
             <p className="text-xs text-muted-foreground/60 mt-1">
-              支持格式: PDF, JPG, PNG, BMP, TIFF, DICOM
+              支持格式: PDF, JPG, PNG, BMP, TIFF, WEBP, GIF, DICOM
             </p>
           </div>
 

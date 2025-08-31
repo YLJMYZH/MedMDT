@@ -15,8 +15,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from medmdt.llm.errors import VisionError
+from medmdt.extractor.file_types import MEDICAL_FILE_EXTENSIONS
 
-SUPPORTED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".dcm", ".dicom"}
+SUPPORTED_EXTENSIONS = MEDICAL_FILE_EXTENSIONS
 ARCHIVE_EXTENSIONS = {".zip", ".tar", ".gz", ".tgz", ".bz2", ".rar", ".7z"}
 MAX_EXTRACTED_SIZE = 2 * 1024 * 1024 * 1024  # 2GB bomb protection
 
