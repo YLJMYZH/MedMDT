@@ -2,6 +2,7 @@ import io
 import logging
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -211,19 +212,43 @@ def test_vision_error_response_and_log_do_not_leak_sensitive_text(
         assert marker not in response.text
         assert marker not in caplog.text
     assert "provider=qwen" in caplog.text
-    assert "model=qwen-vl-max" in caplog.text
+    assert "qwen-vl-max" not in caplog.text
+    assert "model=<redacted>" in caplog.text
     assert "error_type=VisionRequestError" in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("model", "sensitive_markers"),
+    [
+        pytest.param(
+            "sk-proj-abc123",
+            ["sk-proj-abc123"],
+            id="ascii-secret-only",
+        ),
+        pytest.param(
+            "data:image/png;base64,AAAA",
+            ["data:image/png;base64,AAAA"],
+            id="data-url-only",
+        ),
+        pytest.param(
+            "临床背景：患者隐私",
+            ["临床背景", "患者隐私"],
+            id="clinical-context-only",
+        ),
+        pytest.param(
+            "line-one\nforged-log-entry\x1b",
+            ["line-one", "forged-log-entry"],
+            id="control-characters-only",
+        ),
+        pytest.param("m" * 128, ["m" * 128], id="length-boundary"),
+        pytest.param("m" * 129, ["m" * 129], id="overlong"),
+        pytest.param("qwen-vl-max", ["qwen-vl-max"], id="normal-model"),
+    ],
+)
 @patch("medmdt.api.routes.settings.create_vision_model")
-def test_vision_failure_redacts_unsafe_model_identifier(vision_factory, caplog):
-    sensitive_markers = [
-        "secret-key",
-        "data:image/png;base64,AAAA",
-        "临床背景：患者隐私",
-        "forged-log-entry",
-    ]
-    malicious_model = " ".join(sensitive_markers[:-1]) + "\n" + sensitive_markers[-1]
+def test_vision_failure_always_redacts_request_model(
+    vision_factory, model, sensitive_markers, caplog
+):
     vision_factory.side_effect = VisionRequestError("safe failure category")
 
     with caplog.at_level(logging.WARNING, logger="medmdt.api.routes.settings"):
@@ -231,36 +256,19 @@ def test_vision_failure_redacts_unsafe_model_identifier(vision_factory, caplog):
             "/api/v1/settings/test-vision",
             json={
                 "provider": "qwen",
-                "model": malicious_model,
+                "model": model,
                 "api_key": "test-key",
             },
         )
 
     assert response.status_code == 400
+    assert model not in response.text
+    assert model not in caplog.text
     for marker in sensitive_markers:
         assert marker not in response.text
         assert marker not in caplog.text
-    assert "\nforged-log-entry" not in caplog.text
     assert "provider=qwen" in caplog.text
     assert "model=<redacted>" in caplog.text
-    assert "error_type=VisionRequestError" in caplog.text
-
-
-@patch("medmdt.api.routes.settings.create_vision_model")
-def test_vision_failure_redacts_overlong_model_identifier(vision_factory, caplog):
-    overlong_model = "m" * 129
-    vision_factory.side_effect = VisionRequestError("safe failure category")
-
-    with caplog.at_level(logging.WARNING, logger="medmdt.api.routes.settings"):
-        response = TestClient(create_app()).post(
-            "/api/v1/settings/test-vision",
-            json={"provider": "qwen", "model": overlong_model},
-        )
-
-    assert response.status_code == 400
-    assert overlong_model not in caplog.text
-    assert "model=<redacted>" in caplog.text
-    assert "provider=qwen" in caplog.text
     assert "error_type=VisionRequestError" in caplog.text
 
 

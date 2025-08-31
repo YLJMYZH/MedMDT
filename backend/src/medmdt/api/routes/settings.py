@@ -1,5 +1,4 @@
 import logging
-import re
 import uuid
 from io import BytesIO
 
@@ -228,15 +227,6 @@ def _vision_test_png() -> bytes:
     return output.getvalue()
 
 
-_SAFE_LOG_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,127}")
-
-
-def _safe_log_identifier(value: str) -> str:
-    if _SAFE_LOG_IDENTIFIER.fullmatch(value) is None:
-        return "<redacted>"
-    return value
-
-
 @router.post("/test-vision")
 def test_vision_connection(body: TestRequest):
     request_id = uuid.uuid4().hex[:12]
@@ -271,7 +261,7 @@ def test_vision_connection(body: TestRequest):
             "Vision connection test failed request_id=%s provider=%s model=%s error_type=%s",
             request_id,
             body.provider,
-            _safe_log_identifier(body.model),
+            "<redacted>",
             type(exc).__name__,
         )
         raise HTTPException(status_code=400, detail="图片能力测试失败") from None
@@ -280,7 +270,7 @@ def test_vision_connection(body: TestRequest):
             "Vision connection test failed request_id=%s provider=%s model=%s error_type=%s",
             request_id,
             body.provider,
-            _safe_log_identifier(body.model),
+            "<redacted>",
             type(exc).__name__,
         )
         raise HTTPException(status_code=400, detail="图片能力测试失败") from None
