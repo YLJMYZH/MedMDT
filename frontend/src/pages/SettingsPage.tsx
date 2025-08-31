@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -33,6 +33,8 @@ function LLMSection({
   const [testing, setTesting] = useState(false)
   const [message, setMessage] = useState<Message | null>(null)
   const [visionVerified, setVisionVerified] = useState(false)
+  const visionConfigGeneration = useRef(0)
+  const modelRef = useRef(endpoint.model)
 
   const currentProvider = providers.find(p => p.key === provider)
   const needsKey = currentProvider?.needs_key ?? true
@@ -41,13 +43,12 @@ function LLMSection({
   const visionUnavailable = isVision && currentProvider?.vision_status === 'unavailable'
   const visionUnknown = isVision && currentProvider?.vision_status === 'unknown'
 
-  const resetVisionVerification = useCallback(() => {
-    if (isVision) setVisionVerified(false)
+  const invalidateVisionConfig = useCallback(() => {
+    if (!isVision) return
+    visionConfigGeneration.current += 1
+    setVisionVerified(false)
+    setMessage(null)
   }, [isVision])
-
-  useEffect(() => {
-    resetVisionVerification()
-  }, [provider, model, apiKey, baseUrl, resetVisionVerification])
 
   const fetchModels = useCallback(async (p: string, key: string, url: string) => {
     if (!p) {
@@ -61,7 +62,12 @@ function LLMSection({
       const res = await api.listModels({ provider: p, api_key: key || null, base_url: url || null })
       setModels(res.models)
       if (res.models.length > 0) {
-        setModel(prev => res.models.includes(prev) ? prev : res.models[0])
+        const nextModel = res.models.includes(modelRef.current) ? modelRef.current : res.models[0]
+        if (nextModel !== modelRef.current) {
+          invalidateVisionConfig()
+          modelRef.current = nextModel
+          setModel(nextModel)
+        }
       }
     } catch (err) {
       setModels([])
@@ -69,7 +75,7 @@ function LLMSection({
     } finally {
       setLoadingModels(false)
     }
-  }, [])
+  }, [invalidateVisionConfig])
 
   useEffect(() => {
     if (endpoint.api_key || !needsKey) {
@@ -93,6 +99,7 @@ function LLMSection({
   }
 
   const handleTest = async () => {
+    const testedGeneration = visionConfigGeneration.current
     setTesting(true)
     setMessage(null)
     try {
@@ -105,9 +112,11 @@ function LLMSection({
       const res = isVision
         ? await api.testVisionConnection(payload)
         : await api.testConnection(payload)
+      if (isVision && testedGeneration !== visionConfigGeneration.current) return
       if (isVision) setVisionVerified(true)
       setMessage({ type: 'success', text: res.message })
     } catch (err) {
+      if (isVision && testedGeneration !== visionConfigGeneration.current) return
       if (isVision) setVisionVerified(false)
       setMessage({ type: 'error', text: err instanceof Error ? err.message : '连接失败' })
     } finally {
@@ -123,8 +132,10 @@ function LLMSection({
           value={provider}
           onChange={e => {
             const p = e.target.value
+            invalidateVisionConfig()
             setProvider(p)
             setModels([])
+            modelRef.current = ''
             setModel('')
             fetchModels(p, apiKey, baseUrl)
           }}
@@ -166,7 +177,10 @@ function LLMSection({
           <Input
             type="password"
             value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
+            onChange={e => {
+              invalidateVisionConfig()
+              setApiKey(e.target.value)
+            }}
             placeholder="sk-..."
           />
         </div>
@@ -177,7 +191,10 @@ function LLMSection({
           <label className="text-sm font-medium mb-1.5 block">Base URL</label>
           <Input
             value={baseUrl}
-            onChange={e => setBaseUrl(e.target.value)}
+            onChange={e => {
+              invalidateVisionConfig()
+              setBaseUrl(e.target.value)
+            }}
             placeholder="https://api.example.com/v1"
           />
         </div>
@@ -200,7 +217,11 @@ function LLMSection({
         {models.length > 0 ? (
           <select
             value={model}
-            onChange={e => setModel(e.target.value)}
+            onChange={e => {
+              invalidateVisionConfig()
+              modelRef.current = e.target.value
+              setModel(e.target.value)
+            }}
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           >
             {models.map(m => (
@@ -210,7 +231,11 @@ function LLMSection({
         ) : (
           <Input
             value={model}
-            onChange={e => setModel(e.target.value)}
+            onChange={e => {
+              invalidateVisionConfig()
+              modelRef.current = e.target.value
+              setModel(e.target.value)
+            }}
             placeholder="输入模型名称"
           />
         )}
