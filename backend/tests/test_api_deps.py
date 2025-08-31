@@ -177,6 +177,70 @@ def test_run_ingest_logs_only_safe_metadata_for_vision_errors(
     assert "clinical context" not in caplog.text
 
 
+@patch("medmdt.api.deps.build_infrastructure")
+def test_run_ingest_handles_vision_error_while_building_infrastructure(
+    build_infrastructure, tmp_path, caplog
+):
+    from medmdt.api.routes.knowledge import _ingest_jobs, _run_ingest
+
+    stable_error = "视觉服务暂不可用（clinical context）"
+    build_infrastructure.side_effect = VisionRequestError(stable_error)
+    file_path = tmp_path / "patient-secret.png"
+    file_path.write_bytes(b"secret-image-bytes")
+    _ingest_jobs["job-build-safe"] = {"status": "queued"}
+    caplog.set_level("WARNING", logger="medmdt.api.routes.knowledge")
+
+    _run_ingest("job-build-safe", str(file_path))
+
+    build_infrastructure.assert_called_once_with()
+    assert _ingest_jobs["job-build-safe"]["status"] == "failed"
+    assert _ingest_jobs["job-build-safe"]["message"] == stable_error
+    record = caplog.records[-1]
+    assert record.getMessage() == (
+        "Vision ingest failed job_id=job-build-safe provider=unknown "
+        "model=unknown error_type=VisionRequestError"
+    )
+    assert record.exc_info is None
+    assert "UnboundLocalError" not in caplog.text
+    assert "patient-secret" not in caplog.text
+    assert "secret-image-bytes" not in caplog.text
+    assert "clinical context" not in caplog.text
+
+
+@patch("medmdt.api.deps.build_infrastructure")
+def test_run_batch_ingest_handles_vision_error_while_building_infrastructure(
+    build_infrastructure, tmp_path, caplog
+):
+    from medmdt.api.routes.knowledge import _ingest_jobs, _run_batch_ingest
+
+    stable_error = "视觉服务暂不可用（clinical context）"
+    build_infrastructure.side_effect = VisionRequestError(stable_error)
+    archive_path = tmp_path / "patient-secret.zip"
+    archive_path.write_bytes(b"secret-archive-bytes")
+    _ingest_jobs["batch-build-safe"] = {
+        "status": "queued",
+        "progress": {"current": 0, "total": 0},
+        "folders": [],
+    }
+    caplog.set_level("WARNING", logger="medmdt.api.routes.knowledge")
+
+    _run_batch_ingest("batch-build-safe", str(archive_path))
+
+    build_infrastructure.assert_called_once_with()
+    assert _ingest_jobs["batch-build-safe"]["status"] == "failed"
+    assert _ingest_jobs["batch-build-safe"]["message"] == stable_error
+    record = caplog.records[-1]
+    assert record.getMessage() == (
+        "Vision batch ingest failed job_id=batch-build-safe provider=unknown "
+        "model=unknown error_type=VisionRequestError"
+    )
+    assert record.exc_info is None
+    assert "UnboundLocalError" not in caplog.text
+    assert "patient-secret" not in caplog.text
+    assert "secret-archive-bytes" not in caplog.text
+    assert "clinical context" not in caplog.text
+
+
 @patch("medmdt.extractor.agent.ExtractionAgent")
 @patch("medmdt.api.deps.build_infrastructure")
 def test_run_batch_ingest_propagates_vision_error_from_real_archive(

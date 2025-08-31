@@ -38,9 +38,13 @@ def _run_ingest(job_id: str, file_path: str) -> None:
     from medmdt.api.deps import build_infrastructure
     from medmdt.extractor.agent import ExtractionAgent
 
+    vision_provider = "unknown"
+    vision_model = "unknown"
     try:
         _ingest_jobs[job_id]["status"] = "processing"
         infra = build_infrastructure()
+        vision_provider = infra.get("vision_provider") or "unknown"
+        vision_model = infra.get("vision_model") or "unknown"
 
         infra["vector_store"].ensure_collection()
         infra["keyword_store"].ensure_index()
@@ -66,8 +70,8 @@ def _run_ingest(job_id: str, file_path: str) -> None:
         logger.warning(
             "Vision ingest failed job_id=%s provider=%s model=%s error_type=%s",
             job_id,
-            infra["vision_provider"],
-            infra["vision_model"],
+            vision_provider,
+            vision_model,
             type(exc).__name__,
         )
         _ingest_jobs[job_id].update(status="failed", message=str(exc))
@@ -192,9 +196,13 @@ def _run_batch_ingest(job_id: str, file_path: str) -> None:
     from medmdt.extractor.agent import ExtractionAgent
     from medmdt.extractor.batch_ingest import process_archive
 
+    vision_provider = "unknown"
+    vision_model = "unknown"
     try:
         _ingest_jobs[job_id]["status"] = "processing"
         infra = build_infrastructure()
+        vision_provider = infra.get("vision_provider") or "unknown"
+        vision_model = infra.get("vision_model") or "unknown"
 
         infra["vector_store"].ensure_collection()
         infra["keyword_store"].ensure_index()
@@ -242,8 +250,8 @@ def _run_batch_ingest(job_id: str, file_path: str) -> None:
         logger.warning(
             "Vision batch ingest failed job_id=%s provider=%s model=%s error_type=%s",
             job_id,
-            infra["vision_provider"],
-            infra["vision_model"],
+            vision_provider,
+            vision_model,
             type(exc).__name__,
         )
         _ingest_jobs[job_id].update(status="failed", message=str(exc))
