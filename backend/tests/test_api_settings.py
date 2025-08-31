@@ -111,7 +111,7 @@ def test_vision_connection_uses_real_red_png(vision_factory, parser_cls):
     )
 
     assert response.status_code == 200
-    assert response.json()["message"] == "图片能力测试成功: 红色测试图"
+    assert response.json()["message"] == "图片能力测试成功"
     vision_factory.assert_called_once_with("qwen", "qwen-vl-max", api_key="test-key")
     parser_cls.assert_called_once_with(vision_factory.return_value)
     parser_cls.return_value.analyze.assert_called_once()
@@ -120,6 +120,31 @@ def test_vision_connection_uses_real_red_png(vision_factory, parser_cls):
     with Image.open(io.BytesIO(test_bytes)) as image:
         assert image.size == (32, 32)
         assert image.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
+
+
+@patch("medmdt.api.routes.settings.ImageParser")
+@patch("medmdt.api.routes.settings.create_vision_model")
+def test_vision_success_response_does_not_echo_provider_controlled_description(
+    vision_factory, parser_cls
+):
+    sensitive_markers = [
+        "secret-key",
+        "data:image/png;base64,AAAA",
+        "临床背景：患者隐私",
+    ]
+    parser_cls.return_value.analyze.return_value = MagicMock(
+        description=" | ".join(sensitive_markers)
+    )
+
+    response = TestClient(create_app()).post(
+        "/api/v1/settings/test-vision",
+        json={"provider": "qwen", "model": "qwen-vl-max"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "图片能力测试成功"
+    for marker in sensitive_markers:
+        assert marker not in response.text
 
 
 @patch("medmdt.api.routes.settings.ImageParser", create=True)
@@ -162,8 +187,13 @@ def test_deepseek_vision_test_returns_capability_error():
 def test_vision_error_response_and_log_do_not_leak_sensitive_text(
     vision_factory, caplog
 ):
-    sensitive = "sdk secret-key data:image/png;base64,AAAA 临床背景"
-    vision_factory.side_effect = VisionRequestError(sensitive)
+    sensitive_markers = [
+        "raw-sdk-message",
+        "secret-key",
+        "data:image/png;base64,AAAA",
+        "临床背景：患者隐私",
+    ]
+    vision_factory.side_effect = VisionRequestError(" | ".join(sensitive_markers))
 
     with caplog.at_level(logging.WARNING, logger="medmdt.api.routes.settings"):
         response = TestClient(create_app()).post(
@@ -177,10 +207,60 @@ def test_vision_error_response_and_log_do_not_leak_sensitive_text(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "图片能力测试失败"
-    assert sensitive not in response.text
-    assert sensitive not in caplog.text
+    for marker in sensitive_markers:
+        assert marker not in response.text
+        assert marker not in caplog.text
     assert "provider=qwen" in caplog.text
     assert "model=qwen-vl-max" in caplog.text
+    assert "error_type=VisionRequestError" in caplog.text
+
+
+@patch("medmdt.api.routes.settings.create_vision_model")
+def test_vision_failure_redacts_unsafe_model_identifier(vision_factory, caplog):
+    sensitive_markers = [
+        "secret-key",
+        "data:image/png;base64,AAAA",
+        "临床背景：患者隐私",
+        "forged-log-entry",
+    ]
+    malicious_model = " ".join(sensitive_markers[:-1]) + "\n" + sensitive_markers[-1]
+    vision_factory.side_effect = VisionRequestError("safe failure category")
+
+    with caplog.at_level(logging.WARNING, logger="medmdt.api.routes.settings"):
+        response = TestClient(create_app()).post(
+            "/api/v1/settings/test-vision",
+            json={
+                "provider": "qwen",
+                "model": malicious_model,
+                "api_key": "test-key",
+            },
+        )
+
+    assert response.status_code == 400
+    for marker in sensitive_markers:
+        assert marker not in response.text
+        assert marker not in caplog.text
+    assert "\nforged-log-entry" not in caplog.text
+    assert "provider=qwen" in caplog.text
+    assert "model=<redacted>" in caplog.text
+    assert "error_type=VisionRequestError" in caplog.text
+
+
+@patch("medmdt.api.routes.settings.create_vision_model")
+def test_vision_failure_redacts_overlong_model_identifier(vision_factory, caplog):
+    overlong_model = "m" * 129
+    vision_factory.side_effect = VisionRequestError("safe failure category")
+
+    with caplog.at_level(logging.WARNING, logger="medmdt.api.routes.settings"):
+        response = TestClient(create_app()).post(
+            "/api/v1/settings/test-vision",
+            json={"provider": "qwen", "model": overlong_model},
+        )
+
+    assert response.status_code == 400
+    assert overlong_model not in caplog.text
+    assert "model=<redacted>" in caplog.text
+    assert "provider=qwen" in caplog.text
     assert "error_type=VisionRequestError" in caplog.text
 
 

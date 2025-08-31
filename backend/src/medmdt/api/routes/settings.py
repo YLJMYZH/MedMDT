@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from io import BytesIO
 
@@ -227,6 +228,15 @@ def _vision_test_png() -> bytes:
     return output.getvalue()
 
 
+_SAFE_LOG_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,127}")
+
+
+def _safe_log_identifier(value: str) -> str:
+    if _SAFE_LOG_IDENTIFIER.fullmatch(value) is None:
+        return "<redacted>"
+    return value
+
+
 @router.post("/test-vision")
 def test_vision_connection(body: TestRequest):
     request_id = uuid.uuid4().hex[:12]
@@ -251,20 +261,17 @@ def test_vision_connection(body: TestRequest):
 
     try:
         llm = create_vision_model(body.provider, body.model, **kwargs)
-        result = ImageParser(llm).analyze(
+        ImageParser(llm).analyze(
             _vision_test_png(),
             context="视觉连接测试图片；请按要求返回结构化 JSON。",
         )
-        return {
-            "status": "ok",
-            "message": f"图片能力测试成功: {result.description[:80]}",
-        }
+        return {"status": "ok", "message": "图片能力测试成功"}
     except VisionError as exc:
         logger.warning(
             "Vision connection test failed request_id=%s provider=%s model=%s error_type=%s",
             request_id,
             body.provider,
-            body.model,
+            _safe_log_identifier(body.model),
             type(exc).__name__,
         )
         raise HTTPException(status_code=400, detail="图片能力测试失败") from None
@@ -273,7 +280,7 @@ def test_vision_connection(body: TestRequest):
             "Vision connection test failed request_id=%s provider=%s model=%s error_type=%s",
             request_id,
             body.provider,
-            body.model,
+            _safe_log_identifier(body.model),
             type(exc).__name__,
         )
         raise HTTPException(status_code=400, detail="图片能力测试失败") from None
