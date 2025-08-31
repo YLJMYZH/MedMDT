@@ -1,6 +1,10 @@
 # tests/test_extraction_agent.py
+from io import BytesIO
 from unittest.mock import MagicMock, patch
+
 import pytest
+from PIL import Image
+
 from medmdt.extractor.agent import ExtractionAgent
 from medmdt.extractor.schemas import ParsedPage
 from medmdt.extractor.ingestor import IngestReport
@@ -35,6 +39,12 @@ def _mock_llm_responses(llm):
     }'''
 
     llm.invoke.side_effect = [entity_response, chunk_response]
+
+
+def _png_bytes() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (8, 8), color="red").save(output, format="PNG")
+    return output.getvalue()
 
 
 @patch("medmdt.extractor.agent.PaddleOCRClient")
@@ -87,7 +97,7 @@ def test_process_pdf_with_images_triggers_image_analysis(mock_ocr_cls, settings,
 
     mock_ocr = MagicMock()
     mock_ocr.parse.return_value = [
-        ParsedPage(page_num=0, markdown="# 胸部X光报告", images=[b"fake-xray"]),
+        ParsedPage(page_num=0, markdown="# 胸部X光报告", images=[_png_bytes()]),
     ]
     mock_ocr_cls.return_value = mock_ocr
 

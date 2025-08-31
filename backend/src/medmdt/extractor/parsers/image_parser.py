@@ -2,12 +2,29 @@
 """Multimodal LLM-based medical image analysis parser."""
 
 import base64
-import json
+from io import BytesIO
 import re
+from typing import Any
 
-from pydantic import BaseModel, Field
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
+from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, Field, ValidationError
+
+from medmdt.llm.errors import (
+    InvalidImageError,
+    InvalidVisionResponse,
+    VisionModelNotSupported,
+    VisionRequestError,
+)
+
+DEFAULT_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+DIRECT_IMAGE_MIME = {
+    "PNG": "image/png",
+    "JPEG": "image/jpeg",
+    "WEBP": "image/webp",
+    "GIF": "image/gif",
+}
 
 ANALYSIS_PROMPT = """你是一位资深医学影像分析专家。请分析这张医学图像，输出JSON格式：
 {
@@ -27,11 +44,79 @@ class ImageAnalysisResult(BaseModel):
     modality: str | None = None
 
 
+def _prepare_image(image_data: bytes, max_image_bytes: int) -> tuple[bytes, str]:
+    if not image_data:
+        raise InvalidImageError("图片内容为空")
+    try:
+        with Image.open(BytesIO(image_data)) as image:
+            image_format = image.format
+            image.verify()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise InvalidImageError("图片损坏或格式无法识别") from exc
+
+    if image_format in DIRECT_IMAGE_MIME:
+        normalized = image_data
+        mime_type = DIRECT_IMAGE_MIME[image_format]
+    else:
+        output = BytesIO()
+        with Image.open(BytesIO(image_data)) as image:
+            image.save(output, format="PNG")
+        normalized = output.getvalue()
+        mime_type = "image/png"
+
+    if len(normalized) > max_image_bytes:
+        raise InvalidImageError(
+            f"图片超过 {max_image_bytes} 字节传输大小限制；系统不会静默缩放医学影像"
+        )
+    return normalized, mime_type
+
+
+def _extract_response_text(content: Any) -> str:
+    if isinstance(content, str) and content.strip():
+        return content
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for block in content:
+            if isinstance(block, str) and block.strip():
+                text_parts.append(block)
+            elif isinstance(block, dict) and block.get("type") in {"text", "output_text"}:
+                text = block.get("text")
+                if isinstance(text, str) and text.strip():
+                    text_parts.append(text)
+        if text_parts:
+            return "\n".join(text_parts)
+    raise InvalidVisionResponse("视觉模型响应中没有可用文本")
+
+
+def _invoke_model(llm: BaseChatModel, message: HumanMessage):
+    try:
+        return llm.invoke([message])
+    except Exception as exc:
+        response = getattr(exc, "response", None)
+        status_code = getattr(exc, "status_code", None) or getattr(
+            response, "status_code", None
+        )
+        error_text = str(exc).lower()
+        image_markers = ("image", "vision", "multimodal", "image_url", "图片", "视觉")
+        if status_code in {400, 404, 422} and any(
+            marker in error_text for marker in image_markers
+        ):
+            raise VisionModelNotSupported("所选模型不接受图片输入") from None
+        # Do not retain the SDK exception chain: some clients attach the full
+        # request body, which contains the Base64 medical image.
+        raise VisionRequestError("视觉模型请求失败，请检查认证、限流和服务状态") from None
+
+
 class ImageParser:
     """Sends medical images to a multimodal LLM for structured analysis."""
 
-    def __init__(self, llm: BaseChatModel):
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
+    ):
         self._llm = llm
+        self._max_image_bytes = max_image_bytes
 
     def analyze(
         self, image_data: bytes, context: str = ""
@@ -45,17 +130,20 @@ class ImageParser:
         Returns:
             Structured ImageAnalysisResult.
         """
-        b64 = base64.b64encode(image_data).decode()
-        content: list[dict] = [
-            {"type": "text", "text": self._build_prompt(context)},
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{b64}"},
-            },
-        ]
-        message = HumanMessage(content=content)
-        response = self._llm.invoke([message])
-        return self._parse_response(response.content)
+        normalized, mime_type = _prepare_image(image_data, self._max_image_bytes)
+        validation_error: ValidationError | None = None
+        for attempt in range(2):
+            prompt = self._build_prompt(context)
+            if attempt == 1:
+                prompt += "\n\n上一次响应不是有效 JSON。请严格只返回符合上述字段定义的 JSON。"
+            message = self._build_message(normalized, mime_type, prompt)
+            response = _invoke_model(self._llm, message)
+            raw = _extract_response_text(response.content)
+            try:
+                return self._parse_response(raw)
+            except ValidationError as exc:
+                validation_error = exc
+        raise InvalidVisionResponse("视觉模型未返回有效的结构化 JSON") from validation_error
 
     def analyze_batch(
         self, images: list[bytes], context: str = ""
@@ -75,6 +163,18 @@ class ImageParser:
         if context:
             return f"{ANALYSIS_PROMPT}\n\n临床背景：{context}"
         return ANALYSIS_PROMPT
+
+    def _build_message(
+        self, image_data: bytes, mime_type: str, prompt: str
+    ) -> HumanMessage:
+        encoded = base64.b64encode(image_data).decode("ascii")
+        return HumanMessage(content=[
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+            },
+        ])
 
     @staticmethod
     def _parse_response(raw: str) -> ImageAnalysisResult:
