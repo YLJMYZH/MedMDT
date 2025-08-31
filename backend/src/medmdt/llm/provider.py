@@ -16,7 +16,7 @@ All return a ``BaseChatModel`` so callers use the same ``.invoke()/.stream()``.
 """
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Literal
 
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
@@ -24,6 +24,11 @@ from langchain_anthropic import ChatAnthropic
 from langchain_deepseek import ChatDeepSeek
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_community.chat_models.zhipuai import ChatZhipuAI
+
+from medmdt.llm.errors import VisionProviderNotSupported
+
+ModelFactory = Callable[..., BaseChatModel]
+VisionStatus = Literal["supported", "unavailable", "unknown"]
 
 
 @dataclass
@@ -38,8 +43,23 @@ class LLMConfig:
     max_tokens: int | None = None
 
 
-# Only providers still served through the OpenAI-compatible ChatOpenAI path.
-_OPENAI_COMPAT_URLS: dict[str, str] = {
+@dataclass(frozen=True)
+class ProviderSpec:
+    key: str
+    label: str
+    chat_factory: ModelFactory
+    vision_factory: ModelFactory | None
+    vision_status: VisionStatus
+    api_base_url: str | None = None
+    needs_key: bool = True
+    needs_base_url: bool = False
+
+
+_PROVIDER_BASE_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
     "moonshot": "https://api.moonshot.cn/v1",
 }
 
@@ -91,7 +111,7 @@ def _create_zhipu(model: str, temperature: float, **kwargs) -> BaseChatModel:
 def _create_openai_compat(
     provider: str, model: str, temperature: float, **kwargs
 ) -> BaseChatModel:
-    base_url = kwargs.pop("base_url", _OPENAI_COMPAT_URLS[provider])
+    base_url = kwargs.pop("base_url", _PROVIDER_BASE_URLS[provider])
     api_key = kwargs.pop("api_key", None)
     params: dict = {
         "model": model,
@@ -120,15 +140,87 @@ def _create_custom(model: str, temperature: float, **kwargs) -> BaseChatModel:
     return ChatOpenAI(**params)
 
 
-PROVIDER_REGISTRY: dict[str, Callable] = {
-    "openai": lambda m, t, **kw: _create_openai(m, t, **kw),
-    "anthropic": lambda m, t, **kw: _create_anthropic(m, t, **kw),
-    "deepseek": lambda m, t, **kw: _create_deepseek(m, t, **kw),
-    "qwen": lambda m, t, **kw: _create_tongyi(m, t, **kw),
-    "zhipu": lambda m, t, **kw: _create_zhipu(m, t, **kw),
-    "moonshot": lambda m, t, **kw: _create_openai_compat("moonshot", m, t, **kw),
-    "custom": lambda m, t, **kw: _create_custom(m, t, **kw),
+def _create_compatible_vision(
+    provider: str, model: str, temperature: float, **kwargs
+) -> BaseChatModel:
+    base_url = kwargs.pop("base_url", None) or _PROVIDER_BASE_URLS.get(provider)
+    if not base_url:
+        raise ValueError(f"{provider} vision provider requires base_url")
+    api_key = kwargs.pop("api_key", None)
+    params = {
+        "model": model,
+        "base_url": base_url,
+        "temperature": temperature,
+        "use_responses_api": False,
+        **kwargs,
+    }
+    if api_key:
+        params["api_key"] = api_key
+    return ChatOpenAI(**params)
+
+
+PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
+    "openai": ProviderSpec(
+        "openai",
+        "OpenAI",
+        _create_openai,
+        _create_openai,
+        "supported",
+        api_base_url=_PROVIDER_BASE_URLS["openai"],
+    ),
+    "anthropic": ProviderSpec(
+        "anthropic", "Anthropic", _create_anthropic, _create_anthropic, "supported"
+    ),
+    "deepseek": ProviderSpec(
+        "deepseek",
+        "DeepSeek",
+        _create_deepseek,
+        None,
+        "unavailable",
+        api_base_url=_PROVIDER_BASE_URLS["deepseek"],
+    ),
+    "qwen": ProviderSpec(
+        "qwen",
+        "Qwen (通义千问)",
+        _create_tongyi,
+        lambda m, t, **kw: _create_compatible_vision("qwen", m, t, **kw),
+        "supported",
+        api_base_url=_PROVIDER_BASE_URLS["qwen"],
+    ),
+    "zhipu": ProviderSpec(
+        "zhipu",
+        "ZhiPu (智谱)",
+        _create_zhipu,
+        lambda m, t, **kw: _create_compatible_vision("zhipu", m, t, **kw),
+        "supported",
+        api_base_url=_PROVIDER_BASE_URLS["zhipu"],
+    ),
+    "moonshot": ProviderSpec(
+        "moonshot",
+        "Moonshot (月之暗面)",
+        lambda m, t, **kw: _create_openai_compat("moonshot", m, t, **kw),
+        lambda m, t, **kw: _create_compatible_vision("moonshot", m, t, **kw),
+        "supported",
+        api_base_url=_PROVIDER_BASE_URLS["moonshot"],
+    ),
+    "custom": ProviderSpec(
+        "custom",
+        "自定义 (OpenAI 兼容)",
+        _create_custom,
+        lambda m, t, **kw: _create_compatible_vision("custom", m, t, **kw),
+        "unknown",
+        needs_base_url=True,
+    ),
 }
+
+
+def _get_provider(provider: str) -> ProviderSpec:
+    spec = PROVIDER_REGISTRY.get(provider)
+    if spec is None:
+        raise ValueError(
+            f"Unknown provider: {provider}. Available: {list(PROVIDER_REGISTRY)}"
+        )
+    return spec
 
 
 def create_chat_model(
@@ -148,10 +240,32 @@ def create_chat_model(
     Raises:
         ValueError: If the provider is not in PROVIDER_REGISTRY.
     """
-    factory = PROVIDER_REGISTRY.get(provider)
-    if not factory:
-        raise ValueError(
-            f"Unknown provider: {provider}. "
-            f"Available: {list(PROVIDER_REGISTRY.keys())}"
+    return _get_provider(provider).chat_factory(model, temperature, **kwargs)
+
+
+def create_vision_model(
+    provider: str, model: str, temperature: float = 0.0, **kwargs
+) -> BaseChatModel:
+    spec = _get_provider(provider)
+    if spec.vision_factory is None:
+        raise VisionProviderNotSupported(
+            f"{spec.label} 官方 API 暂不支持图像理解，请选择其他视觉模型"
         )
-    return factory(model, temperature, **kwargs)
+    return spec.vision_factory(model, temperature, **kwargs)
+
+
+def get_provider_base_url(provider: str) -> str | None:
+    return _get_provider(provider).api_base_url
+
+
+def list_provider_metadata() -> list[dict[str, object]]:
+    return [
+        {
+            "key": spec.key,
+            "label": spec.label,
+            "needs_key": spec.needs_key,
+            "needs_base_url": spec.needs_base_url,
+            "vision_status": spec.vision_status,
+        }
+        for spec in PROVIDER_REGISTRY.values()
+    ]
