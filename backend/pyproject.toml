@@ -36,3 +36,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/medmdt"]
+
+[tool.pytest.ini_options]
+markers = [
+    "contract: calls a real external provider and may incur cost",
+]
