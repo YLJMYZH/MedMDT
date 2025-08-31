@@ -25,6 +25,7 @@ DIRECT_IMAGE_MIME = {
     "WEBP": "image/webp",
     "GIF": "image/gif",
 }
+PNG_COMPATIBLE_MODES = {"1", "L", "LA", "P", "RGB", "RGBA", "I", "I;16"}
 
 ANALYSIS_PROMPT = """你是一位资深医学影像分析专家。请分析这张医学图像，输出JSON格式：
 {
@@ -47,28 +48,46 @@ class ImageAnalysisResult(BaseModel):
 def _prepare_image(image_data: bytes, max_image_bytes: int) -> tuple[bytes, str]:
     if not image_data:
         raise InvalidImageError("图片内容为空")
+    invalid_image = False
     try:
         with Image.open(BytesIO(image_data)) as image:
             image_format = image.format
-            image.verify()
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
-        raise InvalidImageError("图片损坏或格式无法识别") from exc
+            if image_format in DIRECT_IMAGE_MIME:
+                image.verify()
+                normalized = image_data
+                mime_type = DIRECT_IMAGE_MIME[image_format]
+            else:
+                image.load()
+                if image.mode not in PNG_COMPATIBLE_MODES:
+                    target_mode = "RGBA" if "A" in image.getbands() else "RGB"
+                    image = image.convert(target_mode)
+                output = BytesIO()
+                image.save(output, format="PNG")
+                normalized = output.getvalue()
+                mime_type = "image/png"
+    except (UnidentifiedImageError, OSError, ValueError):
+        invalid_image = True
 
-    if image_format in DIRECT_IMAGE_MIME:
-        normalized = image_data
-        mime_type = DIRECT_IMAGE_MIME[image_format]
-    else:
-        output = BytesIO()
-        with Image.open(BytesIO(image_data)) as image:
-            image.save(output, format="PNG")
-        normalized = output.getvalue()
-        mime_type = "image/png"
+    if invalid_image:
+        raise InvalidImageError("图片损坏或格式无法识别")
 
     if len(normalized) > max_image_bytes:
         raise InvalidImageError(
             f"图片超过 {max_image_bytes} 字节传输大小限制；系统不会静默缩放医学影像"
         )
     return normalized, mime_type
+
+
+def _is_image_input_rejection(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    status_code = getattr(exc, "status_code", None) or getattr(
+        response, "status_code", None
+    )
+    error_text = str(exc).lower()
+    image_markers = ("image", "vision", "multimodal", "image_url", "图片", "视觉")
+    return status_code in {400, 404, 422} and any(
+        marker in error_text for marker in image_markers
+    )
 
 
 def _extract_response_text(content: Any) -> str:
@@ -92,19 +111,13 @@ def _invoke_model(llm: BaseChatModel, message: HumanMessage):
     try:
         return llm.invoke([message])
     except Exception as exc:
-        response = getattr(exc, "response", None)
-        status_code = getattr(exc, "status_code", None) or getattr(
-            response, "status_code", None
-        )
-        error_text = str(exc).lower()
-        image_markers = ("image", "vision", "multimodal", "image_url", "图片", "视觉")
-        if status_code in {400, 404, 422} and any(
-            marker in error_text for marker in image_markers
-        ):
-            raise VisionModelNotSupported("所选模型不接受图片输入") from None
-        # Do not retain the SDK exception chain: some clients attach the full
-        # request body, which contains the Base64 medical image.
-        raise VisionRequestError("视觉模型请求失败，请检查认证、限流和服务状态") from None
+        image_input_rejected = _is_image_input_rejection(exc)
+
+    # Raise outside the except scope so the SDK exception and any attached
+    # Base64 medical image are not retained as context or cause.
+    if image_input_rejected:
+        raise VisionModelNotSupported("所选模型不接受图片输入")
+    raise VisionRequestError("视觉模型请求失败，请检查认证、限流和服务状态")
 
 
 class ImageParser:
@@ -131,7 +144,6 @@ class ImageParser:
             Structured ImageAnalysisResult.
         """
         normalized, mime_type = _prepare_image(image_data, self._max_image_bytes)
-        validation_error: ValidationError | None = None
         for attempt in range(2):
             prompt = self._build_prompt(context)
             if attempt == 1:
@@ -141,9 +153,9 @@ class ImageParser:
             raw = _extract_response_text(response.content)
             try:
                 return self._parse_response(raw)
-            except ValidationError as exc:
-                validation_error = exc
-        raise InvalidVisionResponse("视觉模型未返回有效的结构化 JSON") from validation_error
+            except ValidationError:
+                pass
+        raise InvalidVisionResponse("视觉模型未返回有效的结构化 JSON")
 
     def analyze_batch(
         self, images: list[bytes], context: str = ""

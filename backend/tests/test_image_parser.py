@@ -1,4 +1,5 @@
 # tests/test_image_parser.py
+import base64
 from io import BytesIO
 from unittest.mock import MagicMock
 
@@ -92,8 +93,6 @@ def test_image_parser_analyze_batch():
 
 def test_image_parser_sends_base64_image():
     """Verify the message sent to LLM contains base64-encoded image data."""
-    import base64
-
     mock_model = MagicMock()
     mock_response = MagicMock()
     mock_response.content = (
@@ -158,11 +157,38 @@ def test_bmp_is_converted_to_png_before_sending():
     assert block["image_url"]["url"].startswith("data:image/png;base64,")
 
 
+def test_cmyk_tiff_is_converted_to_rgb_png_before_sending():
+    output = BytesIO()
+    Image.new("CMYK", (8, 8), color=(0, 255, 255, 0)).save(output, format="TIFF")
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(
+        content='{"description":"ok","findings":[],"modality":null}'
+    )
+
+    ImageParser(llm).analyze(output.getvalue())
+
+    data_url = llm.invoke.call_args.args[0][0].content[1]["image_url"]["url"]
+    converted = base64.b64decode(data_url.split(",", 1)[1])
+    with Image.open(BytesIO(converted)) as image:
+        assert image.format == "PNG"
+        assert image.mode == "RGB"
+
+
 @pytest.mark.parametrize("payload", [b"", b"not-an-image"])
 def test_invalid_images_fail_before_model_call(payload):
     llm = MagicMock()
     with pytest.raises(InvalidImageError):
         ImageParser(llm).analyze(payload)
+    llm.invoke.assert_not_called()
+
+
+def test_truncated_recognized_image_fails_before_model_call():
+    llm = MagicMock()
+    truncated_bmp = image_bytes("BMP")[:-10]
+
+    with pytest.raises(InvalidImageError, match="损坏或格式无法识别"):
+        ImageParser(llm).analyze(truncated_bmp)
+
     llm.invoke.assert_not_called()
 
 
@@ -201,24 +227,40 @@ def test_invalid_json_is_retried_once_with_same_image():
 def test_second_invalid_json_raises_stable_error():
     llm = MagicMock()
     llm.invoke.return_value = AIMessage(content="not json")
-    with pytest.raises(InvalidVisionResponse):
+    with pytest.raises(InvalidVisionResponse) as exc_info:
         ImageParser(llm).analyze(image_bytes("PNG"))
     assert llm.invoke.call_count == 2
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
 
 
 def test_image_input_rejection_is_classified_as_unsupported():
     llm = MagicMock()
-    error = RuntimeError("image_url input is unsupported")
-    error.status_code = 400
-    llm.invoke.side_effect = error
+    sensitive = (
+        "image_url rejected api_key=sk-secret "
+        "data:image/png;base64,c2VjcmV0 临床背景：患者肺癌"
+    )
+    sdk_error = RuntimeError(sensitive)
+    sdk_error.status_code = 400
+    llm.invoke.side_effect = sdk_error
 
-    with pytest.raises(VisionModelNotSupported, match="不接受图片输入"):
+    with pytest.raises(VisionModelNotSupported, match="不接受图片输入") as exc_info:
         ImageParser(llm).analyze(image_bytes("PNG"))
+    assert sensitive not in str(exc_info.value)
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
 
 
 def test_other_model_errors_raise_stable_request_error():
     llm = MagicMock()
-    llm.invoke.side_effect = RuntimeError("secret provider details")
+    sensitive = (
+        "authentication failed api_key=sk-secret "
+        "data:image/png;base64,c2VjcmV0 临床背景：患者肺癌"
+    )
+    llm.invoke.side_effect = RuntimeError(sensitive)
 
-    with pytest.raises(VisionRequestError, match="视觉模型请求失败"):
+    with pytest.raises(VisionRequestError, match="视觉模型请求失败") as exc_info:
         ImageParser(llm).analyze(image_bytes("PNG"))
+    assert sensitive not in str(exc_info.value)
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
