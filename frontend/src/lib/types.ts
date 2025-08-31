@@ -128,11 +128,14 @@ export interface SaveToKnowledgeResponse {
   chunks_count: number
 }
 
+export type VisionStatus = 'supported' | 'unavailable' | 'unknown'
+
 export interface ProviderInfo {
   key: string
   label: string
   needs_key: boolean
   needs_base_url?: boolean
+  vision_status: VisionStatus
 }
 
 export interface EndpointData {

@@ -14,12 +14,12 @@ interface Message {
 function LLMSection({
   providers,
   endpoint,
-  showTest,
+  testMode,
   onSave,
 }: {
   providers: ProviderInfo[]
   endpoint: EndpointData
-  showTest?: boolean
+  testMode?: 'text' | 'vision'
   onSave: (ep: EndpointData) => Promise<void>
 }) {
   const [provider, setProvider] = useState(endpoint.provider)
@@ -32,10 +32,22 @@ function LLMSection({
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [message, setMessage] = useState<Message | null>(null)
+  const [visionVerified, setVisionVerified] = useState(false)
 
   const currentProvider = providers.find(p => p.key === provider)
   const needsKey = currentProvider?.needs_key ?? true
   const needsBaseUrl = currentProvider?.needs_base_url ?? false
+  const isVision = testMode === 'vision'
+  const visionUnavailable = isVision && currentProvider?.vision_status === 'unavailable'
+  const visionUnknown = isVision && currentProvider?.vision_status === 'unknown'
+
+  const resetVisionVerification = useCallback(() => {
+    if (isVision) setVisionVerified(false)
+  }, [isVision])
+
+  useEffect(() => {
+    resetVisionVerification()
+  }, [provider, model, apiKey, baseUrl, resetVisionVerification])
 
   const fetchModels = useCallback(async (p: string, key: string, url: string) => {
     if (!p) {
@@ -84,9 +96,19 @@ function LLMSection({
     setTesting(true)
     setMessage(null)
     try {
-      const res = await api.testConnection({ provider, model, api_key: apiKey || null, base_url: baseUrl || null })
+      const payload = {
+        provider,
+        model,
+        api_key: apiKey || null,
+        base_url: baseUrl || null,
+      }
+      const res = isVision
+        ? await api.testVisionConnection(payload)
+        : await api.testConnection(payload)
+      if (isVision) setVisionVerified(true)
       setMessage({ type: 'success', text: res.message })
     } catch (err) {
+      if (isVision) setVisionVerified(false)
       setMessage({ type: 'error', text: err instanceof Error ? err.message : '连接失败' })
     } finally {
       setTesting(false)
@@ -110,9 +132,32 @@ function LLMSection({
         >
           <option value="" disabled>请选择</option>
           {providers.map(p => (
-            <option key={p.key} value={p.key}>{p.label}</option>
+            <option
+              key={p.key}
+              value={p.key}
+              disabled={isVision && p.vision_status === 'unavailable'}
+            >
+              {p.label}
+              {isVision && p.vision_status === 'unavailable' ? '（暂不支持图片）' : ''}
+              {isVision && p.vision_status === 'unknown' ? '（需实测）' : ''}
+            </option>
           ))}
         </select>
+        {visionUnavailable && (
+          <p className="text-sm text-destructive mt-1">
+            该 Provider 的官方 API 暂不支持图像理解，请选择其他视觉模型。
+          </p>
+        )}
+        {isVision && !visionUnavailable && !visionVerified && (
+          <p className="text-xs text-muted-foreground mt-1">
+            当前模型尚未通过真实图片能力测试，保存前建议先测试。
+          </p>
+        )}
+        {visionUnknown && (
+          <p className="text-xs text-amber-600 mt-1">
+            自定义端点的多模态兼容性未知，必须以图片能力测试结果为准。
+          </p>
+        )}
       </div>
 
       {needsKey && (
@@ -175,12 +220,12 @@ function LLMSection({
       </div>
 
       <div className="flex gap-3 pt-2">
-        {showTest && (
-          <Button onClick={handleTest} disabled={testing} variant="outline">
-            {testing ? '测试中...' : '测试连接'}
+        {testMode && (
+          <Button onClick={handleTest} disabled={testing || visionUnavailable} variant="outline">
+            {testing ? '测试中...' : isVision ? '测试图片能力' : '测试连接'}
           </Button>
         )}
-        <Button onClick={handleSave} disabled={saving}>
+        <Button onClick={handleSave} disabled={saving || visionUnavailable}>
           {saving ? '保存中...' : '保存'}
         </Button>
       </div>
@@ -507,7 +552,7 @@ function ConsultationCard({
         <LLMSection
           providers={providers}
           endpoint={endpoint}
-          showTest
+          testMode="text"
           onSave={onSaveEndpoint}
         />
         <div className="border-t pt-3 mt-2">
@@ -532,7 +577,7 @@ export default function SettingsPage() {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [consultation, setConsultation] = useState<EndpointData>({ provider: 'deepseek', model: 'deepseek-chat', api_key: null, base_url: null })
   const [knowledge, setKnowledge] = useState<EndpointData>({ provider: 'deepseek', model: 'deepseek-chat', api_key: null, base_url: null })
-  const [vision, setVision] = useState<EndpointData>({ provider: 'deepseek', model: 'deepseek-chat', api_key: null, base_url: null })
+  const [vision, setVision] = useState<EndpointData>({ provider: '', model: '', api_key: null, base_url: null })
   const [embedding, setEmbedding] = useState<EmbeddingData>({ provider: '', model: '', api_key: null, base_url: null, dim: 1024 })
   const [experts, setExperts] = useState<Record<string, ExpertLLMData>>({})
   const [expertNames, setExpertNames] = useState<Record<string, string>>({})
@@ -608,7 +653,7 @@ export default function SettingsPage() {
             <LLMSection
               providers={providers}
               endpoint={knowledge}
-              showTest
+              testMode="text"
               onSave={async (ep) => {
                 await api.saveSettings({ knowledge: ep })
                 setKnowledge(ep)
@@ -636,7 +681,7 @@ export default function SettingsPage() {
             <LLMSection
               providers={providers}
               endpoint={vision}
-              showTest
+              testMode="vision"
               onSave={async (ep) => {
                 await api.saveSettings({ vision: ep })
                 setVision(ep)
