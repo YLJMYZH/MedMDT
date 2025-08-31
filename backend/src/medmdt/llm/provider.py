@@ -151,8 +151,8 @@ def _create_compatible_vision(
         "model": model,
         "base_url": base_url,
         "temperature": temperature,
-        "use_responses_api": False,
         **kwargs,
+        "use_responses_api": False,
     }
     if api_key:
         params["api_key"] = api_key

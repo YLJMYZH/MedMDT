@@ -89,6 +89,18 @@ def test_compatible_vision_routes_use_chat_completions(
     assert kwargs["use_responses_api"] is False
 
 
+@patch("medmdt.llm.provider.ChatOpenAI")
+def test_compatible_vision_cannot_override_chat_completions_mode(mock_cls):
+    mock_cls.return_value = MagicMock()
+    create_vision_model(
+        "qwen",
+        "vision-model",
+        api_key="vision-key",
+        use_responses_api=True,
+    )
+    assert mock_cls.call_args.kwargs["use_responses_api"] is False
+
+
 @patch("medmdt.llm.provider.ChatAnthropic")
 def test_anthropic_vision_uses_native_integration(mock_cls):
     mock_cls.return_value = MagicMock()
