@@ -22,6 +22,7 @@ from medmdt.extractor.ingestor import Ingestor, IngestReport
 from medmdt.knowledge.graph_store import GraphStore
 from medmdt.knowledge.vector_store import VectorStore
 from medmdt.knowledge.keyword_store import KeywordStore
+from medmdt.llm.errors import VisionProviderNotSupported
 from medmdt.llm.prompts.extraction.entity_extraction import ENTITY_RELATION_PROMPT
 from medmdt.llm.prompts.extraction.relation_extraction import CHUNK_SUMMARY_PROMPT
 
@@ -41,13 +42,27 @@ class ExtractionAgent:
         keyword_store: KeywordStore,
         embed_fn: Callable[[list[str]], list[list[float]]],
         llm: BaseChatModel,
+        vision_llm: BaseChatModel | None,
+        vision_error: str | None = None,
     ) -> None:
         self._settings = settings
         self._llm = llm
-        self._image_parser = ImageParser(llm=llm)
-        self._dicom_parser = DicomParser(image_parser=self._image_parser)
+        self._vision_error = vision_error
+        self._image_parser = ImageParser(llm=vision_llm) if vision_llm is not None else None
+        self._dicom_parser = (
+            DicomParser(image_parser=self._image_parser)
+            if self._image_parser is not None
+            else None
+        )
         self._ingestor = Ingestor(graph_store, vector_store, keyword_store, embed_fn)
         self._ocr_client = PaddleOCRClient(settings)
+
+    def _require_image_parser(self) -> ImageParser:
+        if self._image_parser is None:
+            raise VisionProviderNotSupported(
+                self._vision_error or "图片分析未配置可用的视觉模型"
+            )
+        return self._image_parser
 
     def process_file(self, file_path: str) -> list[IngestReport]:
         """Process a file end-to-end and return ingest reports.
@@ -75,7 +90,7 @@ class ExtractionAgent:
             image_descriptions: list[str] = []
             if page.images:
                 for img_bytes in page.images:
-                    analysis = self._image_parser.analyze(img_bytes)
+                    analysis = self._require_image_parser().analyze(img_bytes)
                     image_descriptions.append(analysis.description)
 
             full_text = page.markdown
@@ -97,10 +112,11 @@ class ExtractionAgent:
 
     def _process_image(self, file_path: str) -> IngestReport:
         """Analyze a standalone image file and ingest the result."""
+        image_parser = self._require_image_parser()
         with open(file_path, "rb") as f:
             image_data = f.read()
 
-        analysis = self._image_parser.analyze(image_data)
+        analysis = image_parser.analyze(image_data)
         result = ExtractionResult(
             source=SourceInfo(file=file_path, type="image"),
             entities=[],
@@ -118,7 +134,10 @@ class ExtractionAgent:
 
     def _process_dicom(self, file_path: str) -> IngestReport:
         """Parse DICOM file and ingest metadata + image analysis."""
-        dicom_result = self._dicom_parser.parse(file_path)
+        dicom_parser = self._dicom_parser or DicomParser(
+            image_parser=self._require_image_parser()
+        )
+        dicom_result = dicom_parser.parse(file_path)
         result = self._extract_from_text(
             text=dicom_result.raw_text,
             source=SourceInfo(

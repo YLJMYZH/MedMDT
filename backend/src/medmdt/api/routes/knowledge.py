@@ -13,6 +13,7 @@ from medmdt.api.models import (
     BatchIngestResponse,
     FolderResultModel,
 )
+from medmdt.llm.errors import VisionError
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,8 @@ def _run_ingest(job_id: str, file_path: str) -> None:
             keyword_store=infra["keyword_store"],
             embed_fn=infra["embed_fn"],
             llm=infra["llm"],
+            vision_llm=infra["vision_llm"],
+            vision_error=infra["vision_error"],
         )
         reports = agent.process_file(file_path)
         total_entities = sum(r.entities_count for r in reports)
@@ -59,6 +62,15 @@ def _run_ingest(job_id: str, file_path: str) -> None:
             status="completed",
             message=f"提取完成: {total_entities} 实体, {total_chunks} 文本块",
         )
+    except VisionError as exc:
+        logger.warning(
+            "Vision ingest failed job_id=%s provider=%s model=%s error_type=%s",
+            job_id,
+            infra["vision_provider"],
+            infra["vision_model"],
+            type(exc).__name__,
+        )
+        _ingest_jobs[job_id].update(status="failed", message=str(exc))
     except Exception as e:
         logger.exception("Ingest job %s failed", job_id)
         _ingest_jobs[job_id].update(status="failed", message=str(e))
@@ -194,6 +206,8 @@ def _run_batch_ingest(job_id: str, file_path: str) -> None:
             keyword_store=infra["keyword_store"],
             embed_fn=infra["embed_fn"],
             llm=infra["llm"],
+            vision_llm=infra["vision_llm"],
+            vision_error=infra["vision_error"],
         )
 
         def on_folder_done(idx, result):
@@ -224,6 +238,15 @@ def _run_batch_ingest(job_id: str, file_path: str) -> None:
             status="completed",
             message=f"批量处理完成: {completed} 个文件夹成功, {skipped} 个跳过, {failed} 个失败",
         )
+    except VisionError as exc:
+        logger.warning(
+            "Vision batch ingest failed job_id=%s provider=%s model=%s error_type=%s",
+            job_id,
+            infra["vision_provider"],
+            infra["vision_model"],
+            type(exc).__name__,
+        )
+        _ingest_jobs[job_id].update(status="failed", message=str(exc))
     except Exception as e:
         logger.exception("Batch ingest job %s failed", job_id)
         _ingest_jobs[job_id].update(status="failed", message=str(e))

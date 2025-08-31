@@ -11,10 +11,12 @@ def build_infrastructure() -> dict:
     """Build shared infrastructure components (settings, LLM, stores, embed_fn, retriever).
 
     Uses lazy imports to avoid import-time side effects. Returns a dict with keys:
-    settings, llm, vision_llm, graph_store, vector_store, keyword_store, embed_fn, retriever.
+    settings, llm, vision_llm, vision_error, vision_provider, vision_model,
+    graph_store, vector_store, keyword_store, embed_fn, retriever.
     """
     from medmdt.config.settings import get_settings
-    from medmdt.llm.provider import create_chat_model
+    from medmdt.llm.errors import VisionProviderNotSupported
+    from medmdt.llm.provider import create_chat_model, create_vision_model
     from medmdt.knowledge.graph_store import GraphStore
     from medmdt.knowledge.vector_store import VectorStore
     from medmdt.knowledge.keyword_store import KeywordStore
@@ -33,11 +35,16 @@ def build_infrastructure() -> dict:
     )
 
     vision_ep = runtime.vision
-    vision_llm = create_chat_model(
-        vision_ep.provider,
-        vision_ep.model,
-        **get_llm_kwargs(vision_ep),
-    )
+    vision_llm = None
+    vision_error = None
+    try:
+        vision_llm = create_vision_model(
+            vision_ep.provider,
+            vision_ep.model,
+            **get_llm_kwargs(vision_ep),
+        )
+    except VisionProviderNotSupported as exc:
+        vision_error = str(exc)
 
     embed_ep = runtime.embedding
 
@@ -64,6 +71,9 @@ def build_infrastructure() -> dict:
         "settings": settings,
         "llm": llm,
         "vision_llm": vision_llm,
+        "vision_error": vision_error,
+        "vision_provider": vision_ep.provider,
+        "vision_model": vision_ep.model,
         "graph_store": graph_store,
         "vector_store": vector_store,
         "keyword_store": keyword_store,

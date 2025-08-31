@@ -11,8 +11,10 @@ and writes entities, relations, and text chunks to the backing stores.
 import sys
 from pathlib import Path
 
+from medmdt.config.runtime import get_llm_kwargs, load_llm_settings
 from medmdt.config.settings import get_settings
-from medmdt.llm.provider import create_chat_model
+from medmdt.llm.errors import VisionProviderNotSupported
+from medmdt.llm.provider import create_chat_model, create_vision_model
 from medmdt.knowledge.graph_store import GraphStore
 from medmdt.knowledge.vector_store import VectorStore
 from medmdt.knowledge.keyword_store import KeywordStore
@@ -26,6 +28,17 @@ def build_agent() -> ExtractionAgent:
     """Wire up all dependencies and return a ready-to-use ExtractionAgent."""
     settings = get_settings()
     llm = create_chat_model(settings.default_llm_provider, settings.default_llm_model)
+    runtime = load_llm_settings()
+    vision_llm = None
+    vision_error = None
+    try:
+        vision_llm = create_vision_model(
+            runtime.vision.provider,
+            runtime.vision.model,
+            **get_llm_kwargs(runtime.vision),
+        )
+    except (VisionProviderNotSupported, ValueError) as exc:
+        vision_error = str(exc)
 
     graph_store = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
     vector_store = VectorStore(
@@ -48,6 +61,8 @@ def build_agent() -> ExtractionAgent:
         keyword_store=keyword_store,
         embed_fn=embed_fn,
         llm=llm,
+        vision_llm=vision_llm,
+        vision_error=vision_error,
     )
 
 

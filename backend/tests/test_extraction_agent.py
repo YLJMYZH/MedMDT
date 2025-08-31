@@ -9,6 +9,7 @@ from medmdt.extractor.agent import ExtractionAgent
 from medmdt.extractor.schemas import ParsedPage
 from medmdt.extractor.ingestor import IngestReport
 from medmdt.config.settings import Settings
+from medmdt.llm.errors import VisionProviderNotSupported
 
 
 @pytest.fixture
@@ -47,6 +48,77 @@ def _png_bytes() -> bytes:
     return output.getvalue()
 
 
+def test_extraction_agent_uses_separate_vision_model(settings, mock_deps):
+    graph, vector, keyword, embed_fn, text_llm = mock_deps
+    vision_llm = MagicMock()
+    agent = ExtractionAgent(
+        settings=settings,
+        graph_store=graph,
+        vector_store=vector,
+        keyword_store=keyword,
+        embed_fn=embed_fn,
+        llm=text_llm,
+        vision_llm=vision_llm,
+    )
+
+    assert agent._llm is text_llm
+    assert agent._image_parser is not None
+    assert agent._image_parser._llm is vision_llm
+
+
+def _agent_without_vision(settings, mock_deps, vision_error=None):
+    graph, vector, keyword, embed_fn, text_llm = mock_deps
+    return ExtractionAgent(
+        settings=settings,
+        graph_store=graph,
+        vector_store=vector,
+        keyword_store=keyword,
+        embed_fn=embed_fn,
+        llm=text_llm,
+        vision_llm=None,
+        vision_error=vision_error,
+    )
+
+
+def test_process_image_raises_stable_configured_vision_error(
+    settings, mock_deps, tmp_path
+):
+    agent = _agent_without_vision(
+        settings, mock_deps, vision_error="DeepSeek 暂不支持图像理解"
+    )
+    image_path = tmp_path / "scan.png"
+    image_path.write_bytes(_png_bytes())
+
+    with pytest.raises(
+        VisionProviderNotSupported, match="DeepSeek 暂不支持图像理解"
+    ):
+        agent.process_file(str(image_path))
+
+
+@patch("medmdt.extractor.agent.PaddleOCRClient")
+def test_process_pdf_embedded_image_requires_vision(
+    mock_ocr_cls, settings, mock_deps
+):
+    mock_ocr_cls.return_value.parse.return_value = [
+        ParsedPage(page_num=0, markdown="text", images=[_png_bytes()])
+    ]
+    agent = _agent_without_vision(settings, mock_deps)
+
+    with pytest.raises(
+        VisionProviderNotSupported, match="图片分析未配置可用的视觉模型"
+    ):
+        agent.process_file("report.pdf")
+
+
+def test_process_dicom_requires_vision(settings, mock_deps):
+    agent = _agent_without_vision(settings, mock_deps)
+
+    with pytest.raises(
+        VisionProviderNotSupported, match="图片分析未配置可用的视觉模型"
+    ):
+        agent.process_file("scan.dcm")
+
+
 @patch("medmdt.extractor.agent.PaddleOCRClient")
 def test_process_pdf_file(mock_ocr_cls, settings, mock_deps):
     graph, vector, keyword, embed_fn, llm = mock_deps
@@ -70,6 +142,7 @@ def test_process_pdf_file(mock_ocr_cls, settings, mock_deps):
         keyword_store=keyword,
         embed_fn=embed_fn,
         llm=llm,
+        vision_llm=llm,
     )
     reports = agent.process_file("test.pdf")
 
@@ -108,6 +181,7 @@ def test_process_pdf_with_images_triggers_image_analysis(mock_ocr_cls, settings,
         keyword_store=keyword,
         embed_fn=embed_fn,
         llm=llm,
+        vision_llm=llm,
     )
     reports = agent.process_file("xray_report.pdf")
 
@@ -137,6 +211,7 @@ def test_classify_document_guideline(mock_ocr_cls, settings, mock_deps):
         keyword_store=keyword,
         embed_fn=embed_fn,
         llm=llm,
+        vision_llm=llm,
     )
     assert agent._classify_document("这是一份临床指南文档") == "clinical_guideline"
     assert agent._classify_document("guideline for treatment") == "clinical_guideline"
@@ -156,6 +231,7 @@ def test_classify_document_case_report(mock_ocr_cls, settings, mock_deps):
         keyword_store=keyword,
         embed_fn=embed_fn,
         llm=llm,
+        vision_llm=llm,
     )
     assert agent._classify_document("患者入院记录") == "case_report"
     assert agent._classify_document("case study of patient") == "case_report"
@@ -174,6 +250,7 @@ def test_classify_document_textbook(mock_ocr_cls, settings, mock_deps):
         keyword_store=keyword,
         embed_fn=embed_fn,
         llm=llm,
+        vision_llm=llm,
     )
     assert agent._classify_document("内科学教材第三章") == "textbook"
 
@@ -191,6 +268,7 @@ def test_classify_document_other(mock_ocr_cls, settings, mock_deps):
         keyword_store=keyword,
         embed_fn=embed_fn,
         llm=llm,
+        vision_llm=llm,
     )
     assert agent._classify_document("随机文本") == "other"
 
@@ -214,6 +292,7 @@ def test_process_dicom_delegates_to_dicom_parser(mock_ocr_cls, settings, mock_de
         keyword_store=keyword,
         embed_fn=embed_fn,
         llm=llm,
+        vision_llm=llm,
     )
 
     # Mock the dicom parser directly on the agent instance
@@ -269,6 +348,7 @@ def test_extract_from_text_parses_entities_and_chunks(mock_ocr_cls, settings, mo
         keyword_store=keyword,
         embed_fn=embed_fn,
         llm=llm,
+        vision_llm=llm,
     )
     from medmdt.extractor.schemas import SourceInfo
     result = agent._extract_from_text(
@@ -319,6 +399,7 @@ def test_process_pdf_multi_page(mock_ocr_cls, settings, mock_deps):
         keyword_store=keyword,
         embed_fn=embed_fn,
         llm=llm,
+        vision_llm=llm,
     )
     reports = agent.process_file("multi.pdf")
 

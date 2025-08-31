@@ -1,6 +1,7 @@
 import json
 import logging
 import tempfile
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
@@ -13,6 +14,7 @@ from medmdt.api.models import (
     ConsultationStore,
 )
 from medmdt.api.deps import get_consultation_store
+from medmdt.llm.errors import VisionError, VisionProviderNotSupported
 
 logger = logging.getLogger(__name__)
 
@@ -130,12 +132,11 @@ SUPPORTED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".dcm"
 async def upload_consultation_files(files: list[UploadFile] = File(...)):
     """Upload medical files and extract text content for use in consultation."""
     from medmdt.api.deps import build_infrastructure
-    from medmdt.extractor.parsers.image_parser import ImageParser
-    from medmdt.extractor.parsers.dicom_parser import DicomParser
 
     infra = build_infrastructure()
     settings = infra["settings"]
     llm = infra["vision_llm"]
+    request_id = uuid.uuid4().hex[:12]
 
     records = []
     for file in files:
@@ -162,12 +163,19 @@ async def upload_consultation_files(files: list[UploadFile] = File(...)):
                 "content": text,
                 "filename": file.filename or "unknown",
             })
-        except Exception as e:
+        except Exception as exc:
+            logger.warning(
+                "Vision upload failed request_id=%s provider=%s model=%s error_type=%s",
+                request_id,
+                infra["vision_provider"],
+                infra["vision_model"],
+                type(exc).__name__,
+            )
             records.append({
                 "record_type": "error",
                 "content": "",
                 "filename": file.filename or "unknown",
-                "error": str(e),
+                "error": str(exc),
             })
         finally:
             Path(tmp.name).unlink(missing_ok=True)
@@ -187,23 +195,31 @@ def _extract_text_from_file(file_path: str, suffix: str, settings, llm) -> str:
         return "\n\n".join(p.markdown for p in pages if p.markdown)
 
     elif suffix in (".jpg", ".jpeg", ".png", ".bmp", ".tiff"):
-        parser = ImageParser(llm=llm)
-        with open(file_path, "rb") as f:
-            image_bytes = f.read()
+        if llm is None:
+            raise VisionProviderNotSupported("图片分析未配置可用的视觉模型")
         try:
+            parser = ImageParser(llm=llm)
+            with open(file_path, "rb") as f:
+                image_bytes = f.read()
             result = parser.analyze(image_bytes)
             return f"[影像分析]\n模态: {result.modality or '未知'}\n描述: {result.description}\n发现: {', '.join(result.findings)}"
-        except Exception:
-            raise ValueError("当前模型不支持多模态图片分析，请在设置中切换为支持视觉的模型（如 qwen-vl-max）")
+        except VisionError:
+            raise
+        except Exception as exc:
+            raise ValueError("图片分析失败") from exc
 
     elif suffix in (".dcm", ".dicom"):
-        image_parser = ImageParser(llm=llm)
-        parser = DicomParser(image_parser=image_parser)
+        if llm is None:
+            raise VisionProviderNotSupported("图片分析未配置可用的视觉模型")
         try:
+            image_parser = ImageParser(llm=llm)
+            parser = DicomParser(image_parser=image_parser)
             result = parser.parse(file_path)
             return result.raw_text
-        except Exception:
-            raise ValueError("当前模型不支持多模态图片分析，请在设置中切换为支持视觉的模型（如 qwen-vl-max）")
+        except VisionError:
+            raise
+        except Exception as exc:
+            raise ValueError("图片分析失败") from exc
 
     return ""
 
@@ -245,6 +261,8 @@ def save_consultation_to_knowledge(
         keyword_store=infra["keyword_store"],
         embed_fn=infra["embed_fn"],
         llm=infra["llm"],
+        vision_llm=infra["vision_llm"],
+        vision_error=infra["vision_error"],
     )
 
     result = agent._extract_from_text(document, source=f"consultation:{consultation_id}")

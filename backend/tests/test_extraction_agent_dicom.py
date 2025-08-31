@@ -20,13 +20,15 @@ def mock_settings():
 
 @pytest.fixture
 def agent(mock_settings):
+    llm = MagicMock()
     return ExtractionAgent(
         settings=mock_settings,
         graph_store=MagicMock(),
         vector_store=MagicMock(),
         keyword_store=MagicMock(),
         embed_fn=MagicMock(return_value=[[0.1] * 1024]),
-        llm=MagicMock(),
+        llm=llm,
+        vision_llm=llm,
     )
 
 
