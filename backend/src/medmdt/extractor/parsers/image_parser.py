@@ -54,6 +54,8 @@ def _prepare_image(image_data: bytes, max_image_bytes: int) -> tuple[bytes, str]
             image_format = image.format
             if image_format in DIRECT_IMAGE_MIME:
                 image.verify()
+                with Image.open(BytesIO(image_data)) as decoded_image:
+                    decoded_image.load()
                 normalized = image_data
                 mime_type = DIRECT_IMAGE_MIME[image_format]
             else:
@@ -65,7 +67,7 @@ def _prepare_image(image_data: bytes, max_image_bytes: int) -> tuple[bytes, str]
                 image.save(output, format="PNG")
                 normalized = output.getvalue()
                 mime_type = "image/png"
-    except (UnidentifiedImageError, OSError, ValueError):
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError):
         invalid_image = True
 
     if invalid_image:

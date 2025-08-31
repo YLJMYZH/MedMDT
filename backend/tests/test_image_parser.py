@@ -142,9 +142,12 @@ def test_analyze_uses_detected_mime(fmt, mime):
     llm.invoke.return_value = AIMessage(
         content='{"description":"ok","findings":[],"modality":null}'
     )
-    ImageParser(llm).analyze(image_bytes(fmt))
+    payload = image_bytes(fmt)
+    ImageParser(llm).analyze(payload)
     block = llm.invoke.call_args.args[0][0].content[1]
-    assert block["image_url"]["url"].startswith(f"data:{mime};base64,")
+    data_url = block["image_url"]["url"]
+    assert data_url.startswith(f"data:{mime};base64,")
+    assert base64.b64decode(data_url.split(",", 1)[1]) == payload
 
 
 def test_bmp_is_converted_to_png_before_sending():
@@ -189,6 +192,34 @@ def test_truncated_recognized_image_fails_before_model_call():
     with pytest.raises(InvalidImageError, match="损坏或格式无法识别"):
         ImageParser(llm).analyze(truncated_bmp)
 
+    llm.invoke.assert_not_called()
+
+
+@pytest.mark.parametrize(("fmt", "trailing_bytes"), [("JPEG", 1), ("GIF", 3)])
+def test_truncated_direct_image_fails_before_model_call(fmt, trailing_bytes):
+    llm = MagicMock()
+    truncated = image_bytes(fmt)[:-trailing_bytes]
+
+    with pytest.raises(InvalidImageError, match="损坏或格式无法识别") as exc_info:
+        ImageParser(llm).analyze(truncated)
+
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
+    llm.invoke.assert_not_called()
+
+
+def test_direct_image_syntax_error_is_sanitized_before_model_call():
+    llm = MagicMock()
+    truncated_png = image_bytes("PNG")[:-5]
+    with Image.open(BytesIO(truncated_png)) as image:
+        with pytest.raises(SyntaxError):
+            image.verify()
+
+    with pytest.raises(InvalidImageError, match="损坏或格式无法识别") as exc_info:
+        ImageParser(llm).analyze(truncated_png)
+
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
     llm.invoke.assert_not_called()
 
 
