@@ -7,11 +7,16 @@ import logging
 import numpy as np
 from PIL import Image
 from pydicom import dcmread
+from pydicom.dataset import Dataset
 from pydantic import BaseModel, Field
 
 from medmdt.extractor.parsers.image_parser import ImageParser, ImageAnalysisResult
+from medmdt.llm.errors import InvalidImageError
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_DECODED_SAMPLES = 40_000_000
+DEFAULT_MAX_DECODED_BYTES = 160 * 1024 * 1024
 
 
 class DicomMetadata(BaseModel):
@@ -36,12 +41,31 @@ class DicomParseResult(BaseModel):
 
 
 class DicomParser:
-    def __init__(self, image_parser: ImageParser):
+    def __init__(
+        self,
+        image_parser: ImageParser,
+        max_decoded_samples: int = DEFAULT_MAX_DECODED_SAMPLES,
+        max_decoded_bytes: int = DEFAULT_MAX_DECODED_BYTES,
+    ):
         self._image_parser = image_parser
+        self._max_decoded_samples = max_decoded_samples
+        self._max_decoded_bytes = max_decoded_bytes
 
     def parse(self, file_path: str) -> DicomParseResult:
-        ds = dcmread(file_path)
-        metadata = self._extract_metadata(ds)
+        read_error = False
+        try:
+            ds = dcmread(file_path)
+        except Exception:
+            read_error = True
+        if read_error:
+            raise InvalidImageError("DICOM 文件无法安全解析")
+        metadata_error = False
+        try:
+            metadata = self._extract_metadata(ds)
+        except Exception:
+            metadata_error = True
+        if metadata_error:
+            raise InvalidImageError("DICOM 元数据无法安全解析")
         image_analysis = self._analyze_pixels(ds, metadata)
         raw_text = self._build_raw_text(metadata, image_analysis)
 
@@ -91,13 +115,67 @@ class DicomParser:
         )
 
     def _analyze_pixels(self, ds, metadata: DicomMetadata) -> ImageAnalysisResult | None:
-        try:
-            pixel_array = ds.pixel_array
-        except (AttributeError, TypeError):
+        if isinstance(ds, Dataset) and not any(
+            keyword in ds
+            for keyword in ("PixelData", "FloatPixelData", "DoubleFloatPixelData")
+        ):
             logger.info("No pixel data in DICOM file")
             return None
 
-        image_bytes = self._pixels_to_png(pixel_array)
+        invalid_budget = False
+        try:
+            rows = int(ds.Rows)
+            columns = int(ds.Columns)
+            samples_per_pixel = int(getattr(ds, "SamplesPerPixel", 1) or 1)
+            number_of_frames = int(getattr(ds, "NumberOfFrames", 1) or 1)
+            bits_allocated = int(ds.BitsAllocated)
+            expected_samples = rows * columns * samples_per_pixel * number_of_frames
+            expected_bytes = expected_samples * ((bits_allocated + 7) // 8)
+            invalid_budget = (
+                rows <= 0
+                or columns <= 0
+                or samples_per_pixel <= 0
+                or bits_allocated <= 0
+                or number_of_frames != 1
+                or expected_samples > self._max_decoded_samples
+                or expected_bytes > self._max_decoded_bytes
+            )
+        except Exception:
+            invalid_budget = True
+        if invalid_budget:
+            raise InvalidImageError("DICOM 图像超过静态解码安全限制")
+
+        decode_error = False
+        try:
+            pixel_array = ds.pixel_array
+        except AttributeError:
+            logger.info("No pixel data in DICOM file")
+            return None
+        except Exception:
+            decode_error = True
+        if decode_error:
+            raise InvalidImageError("DICOM 像素数据无法安全解码")
+
+        actual_budget_invalid = False
+        try:
+            actual_budget_invalid = (
+                pixel_array.size > expected_samples
+                or pixel_array.nbytes > expected_bytes
+                or pixel_array.size > self._max_decoded_samples
+                or pixel_array.nbytes > self._max_decoded_bytes
+            )
+        except Exception:
+            actual_budget_invalid = True
+        if actual_budget_invalid:
+            raise InvalidImageError("DICOM 解码结果超过安全限制")
+
+        conversion_error = False
+        try:
+            image_bytes = self._pixels_to_png(pixel_array)
+        except Exception:
+            conversion_error = True
+        if conversion_error:
+            raise InvalidImageError("DICOM 像素数据无法安全转换")
         context = f"Modality: {metadata.modality}"
         if metadata.study_description:
             context += f", Study: {metadata.study_description}"
@@ -108,10 +186,11 @@ class DicomParser:
 
     @staticmethod
     def _pixels_to_png(pixel_array: np.ndarray) -> bytes:
-        arr = pixel_array.astype(np.float64)
+        arr = pixel_array.astype(np.float32)
         arr_min, arr_max = arr.min(), arr.max()
         if arr_max > arr_min:
-            arr = (arr - arr_min) / (arr_max - arr_min) * 255.0
+            arr -= arr_min
+            arr *= 255.0 / (arr_max - arr_min)
         arr = arr.astype(np.uint8)
         image = Image.fromarray(arr)
         buf = io.BytesIO()

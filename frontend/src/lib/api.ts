@@ -105,13 +105,13 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  testConnection: (data: { provider: string; model: string; api_key?: string | null; base_url?: string | null }) =>
+  testConnection: (data: { provider: string; model: string; api_key?: string | null; base_url?: string | null; credential_scope: 'consultation' | 'knowledge' }) =>
     request<{ status: string; message: string }>('/api/v1/settings/test', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  testVisionConnection: (data: { provider: string; model: string; api_key?: string | null; base_url?: string | null }) =>
+  testVisionConnection: (data: { provider: string; model: string; api_key?: string | null; base_url?: string | null; credential_scope?: 'vision' }) =>
     request<{ status: string; message: string }>('/api/v1/settings/test-vision', {
       method: 'POST',
       body: JSON.stringify(data),

@@ -133,8 +133,11 @@ function LLMSection({
         base_url: normalizedBaseUrl || null,
       }
       const res = isVision
-        ? await api.testVisionConnection(payload)
-        : await api.testConnection(payload)
+        ? await api.testVisionConnection({ ...payload, credential_scope: 'vision' })
+        : await api.testConnection({
+            ...payload,
+            credential_scope: credentialScope === 'knowledge' ? 'knowledge' : 'consultation',
+          })
       if (isVision && testedGeneration !== visionConfigGeneration.current) return
       if (isVision) setVisionVerified(true)
       setMessage({ type: 'success', text: res.message })
@@ -160,10 +163,11 @@ function LLMSection({
             setModels([])
             modelRef.current = ''
             setModel('')
+            setApiKey('')
             const targetProvider = providers.find(item => item.key === p)
             const normalizedBaseUrl = targetProvider?.needs_base_url ? baseUrl : ''
             setBaseUrl(normalizedBaseUrl)
-            fetchModels(p, apiKey, normalizedBaseUrl)
+            fetchModels(p, '', normalizedBaseUrl)
           }}
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         >
@@ -374,10 +378,14 @@ function EmbeddingSection({
           value={provider}
           onChange={e => {
             const p = e.target.value
+            const targetProvider = providers.find(item => item.key === p)
+            const normalizedBaseUrl = targetProvider?.needs_base_url ? baseUrl : ''
             setProvider(p)
             setModels([])
             setModel('')
-            fetchModels(p, apiKey, baseUrl)
+            setApiKey('')
+            setBaseUrl(normalizedBaseUrl)
+            fetchModels(p, '', normalizedBaseUrl)
           }}
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         >

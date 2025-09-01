@@ -22,6 +22,23 @@ def image_bytes(fmt: str, color: str = "red") -> bytes:
     return output.getvalue()
 
 
+def animated_image_bytes(fmt: str) -> bytes:
+    output = BytesIO()
+    frames = [
+        Image.new("RGB", (8, 8), color="red"),
+        Image.new("RGB", (8, 8), color="blue"),
+    ]
+    frames[0].save(
+        output,
+        format=fmt,
+        save_all=True,
+        append_images=frames[1:],
+        duration=100,
+        loop=0,
+    )
+    return output.getvalue()
+
+
 def test_image_analysis_result():
     r = ImageAnalysisResult(
         description="右肺中叶见斑片状高密度影",
@@ -259,6 +276,32 @@ def test_pillow_decompression_bomb_is_sanitized(monkeypatch, pillow_limit):
 
     with pytest.raises(InvalidImageError, match="像素") as exc_info:
         ImageParser(llm, max_image_pixels=1_000).analyze(image_bytes("PNG"))
+
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
+    llm.invoke.assert_not_called()
+
+
+def test_animated_gif_is_rejected_before_model_call():
+    llm = MagicMock()
+
+    with pytest.raises(InvalidImageError, match="动画|多帧") as exc_info:
+        ImageParser(llm).analyze(animated_image_bytes("GIF"))
+
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
+    llm.invoke.assert_not_called()
+
+
+def test_animated_webp_is_rejected_before_model_call():
+    try:
+        payload = animated_image_bytes("WEBP")
+    except OSError:
+        pytest.skip("Pillow build does not support animated WebP writing")
+    llm = MagicMock()
+
+    with pytest.raises(InvalidImageError, match="动画|多帧") as exc_info:
+        ImageParser(llm).analyze(payload)
 
     assert exc_info.value.__context__ is None
     assert exc_info.value.__cause__ is None

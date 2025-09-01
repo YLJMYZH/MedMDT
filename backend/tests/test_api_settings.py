@@ -1,4 +1,5 @@
 import io
+import socket
 import logging
 from unittest.mock import MagicMock, patch
 
@@ -16,12 +17,13 @@ def _settings(
     consultation: LLMEndpoint | None = None,
     knowledge: LLMEndpoint | None = None,
     vision: LLMEndpoint | None = None,
+    embedding: EmbeddingEndpoint | None = None,
 ) -> LLMSettings:
     return LLMSettings(
         consultation=consultation or LLMEndpoint(),
         knowledge=knowledge or LLMEndpoint(),
         vision=vision or LLMEndpoint(),
-        embedding=EmbeddingEndpoint(),
+        embedding=embedding or EmbeddingEndpoint(),
     )
 
 
@@ -185,9 +187,17 @@ def test_vision_success_response_does_not_echo_provider_controlled_description(
 @patch("medmdt.api.routes.settings.create_vision_model", create=True)
 def test_masked_vision_test_key_falls_back_to_saved_key(vision_factory, parser_cls):
     parser_cls.return_value.analyze.return_value = MagicMock(description="测试图")
-    current = _settings(vision=LLMEndpoint(api_key="saved-vision-key"))
+    current = _settings(
+        vision=LLMEndpoint(provider="qwen", api_key="saved-vision-key")
+    )
 
-    with patch("medmdt.api.routes.settings.load_llm_settings", return_value=current):
+    public_dns = [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+    ]
+    with (
+        patch("medmdt.api.routes.settings.load_llm_settings", return_value=current),
+        patch("socket.getaddrinfo", return_value=public_dns),
+    ):
         response = TestClient(create_app()).post(
             "/api/v1/settings/test-vision",
             json={
@@ -340,12 +350,30 @@ def test_model_listing_uses_registry_base_url(base_url, fetch_models):
 def test_masked_model_listing_key_uses_endpoint_scope(fetch_models, scope, expected_key):
     fetch_models.return_value = {"models": []}
     current = _settings(
-        consultation=LLMEndpoint(api_key="consultation-secret"),
-        knowledge=LLMEndpoint(api_key="knowledge-secret"),
-        vision=LLMEndpoint(api_key="vision-secret"),
+        consultation=LLMEndpoint(
+            provider="openai",
+            api_key="consultation-secret",
+            base_url="https://models.example/v1",
+        ),
+        knowledge=LLMEndpoint(
+            provider="openai",
+            api_key="knowledge-secret",
+            base_url="https://models.example/v1",
+        ),
+        vision=LLMEndpoint(
+            provider="openai",
+            api_key="vision-secret",
+            base_url="https://models.example/v1",
+        ),
     )
 
-    with patch("medmdt.api.routes.settings.load_llm_settings", return_value=current):
+    public_dns = [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+    ]
+    with (
+        patch("medmdt.api.routes.settings.load_llm_settings", return_value=current),
+        patch("socket.getaddrinfo", return_value=public_dns),
+    ):
         response = TestClient(create_app()).post(
             "/api/v1/settings/models",
             json={

@@ -60,12 +60,18 @@ def _prepare_image(
         raise InvalidImageError("图片内容为空")
     invalid_image = False
     pixel_limit_exceeded = False
+    animated_image = False
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(BytesIO(image_data)) as image:
                 width, height = image.size
                 if width * height > max_image_pixels:
+                    raise _ImagePixelLimitExceeded
+                if getattr(image, "is_animated", False) or getattr(
+                    image, "n_frames", 1
+                ) > 1:
+                    animated_image = True
                     raise _ImagePixelLimitExceeded
                 image_format = image.format
                 if image_format in DIRECT_IMAGE_MIME:
@@ -93,6 +99,8 @@ def _prepare_image(
         invalid_image = True
 
     if pixel_limit_exceeded:
+        if animated_image:
+            raise InvalidImageError("不支持动画或多帧图片")
         raise InvalidImageError(f"图片超过 {max_image_pixels} 像素安全限制")
     if invalid_image:
         raise InvalidImageError("图片损坏或格式无法识别")

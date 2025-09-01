@@ -18,6 +18,7 @@ from medmdt.config.runtime import (
     mask_api_key,
 )
 from medmdt.extractor.parsers.image_parser import ImageParser
+from medmdt.api.outbound import canonical_effective_base_url, validate_user_base_url
 from medmdt.llm.errors import VisionError
 from medmdt.llm.provider import (
     PROVIDER_REGISTRY,
@@ -77,6 +78,7 @@ class TestRequest(BaseModel):
     model: str
     api_key: str | None = None
     base_url: str | None = None
+    credential_scope: Literal["consultation", "knowledge", "vision"] = "consultation"
 
 
 def _load_expert_names() -> dict[str, str]:
@@ -128,10 +130,44 @@ def get_settings():
     )
 
 
-def _resolve_key(new_key: str | None, current_key: str | None) -> str | None:
-    if new_key and "****" in new_key:
-        return current_key
-    return new_key
+CredentialScope = Literal["consultation", "knowledge", "vision", "embedding"]
+
+
+def _prepare_outbound_api_key(
+    api_key: str | None,
+    provider: str,
+    base_url: str | None,
+    credential_scope: CredentialScope,
+) -> str | None:
+    if api_key and "****" in api_key:
+        current = load_llm_settings()
+        saved = (
+            current.embedding
+            if credential_scope == "embedding"
+            else getattr(current, credential_scope)
+        )
+        reusable = False
+        try:
+            reusable = (
+                bool(saved.api_key)
+                and provider == saved.provider
+                and canonical_effective_base_url(provider, base_url)
+                == canonical_effective_base_url(saved.provider, saved.base_url)
+            )
+        except (TypeError, ValueError):
+            reusable = False
+        if not reusable:
+            raise HTTPException(
+                status_code=400,
+                detail="无法复用已保存的 API Key",
+            )
+        api_key = saved.api_key
+
+    try:
+        validate_user_base_url(provider, base_url)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Base URL 不安全或无效") from None
+    return api_key
 
 
 @router.put("")
@@ -152,13 +188,19 @@ def update_settings(body: SettingsUpdate):
         if spec.needs_base_url and not (body.vision.base_url or "").strip():
             raise HTTPException(status_code=400, detail="视觉 Provider 需要提供 Base URL")
 
-    def _update_endpoint(new: EndpointData | None, cur: LLMEndpoint) -> LLMEndpoint:
+    def _update_endpoint(
+        new: EndpointData | None,
+        cur: LLMEndpoint,
+        scope: Literal["consultation", "knowledge", "vision"],
+    ) -> LLMEndpoint:
         if not new:
             return cur
         return LLMEndpoint(
             provider=new.provider,
             model=new.model,
-            api_key=_resolve_key(new.api_key, cur.api_key),
+            api_key=_prepare_outbound_api_key(
+                new.api_key, new.provider, new.base_url, scope
+            ),
             base_url=new.base_url,
         )
 
@@ -168,14 +210,18 @@ def update_settings(body: SettingsUpdate):
         return EmbeddingEndpoint(
             provider=new.provider,
             model=new.model,
-            api_key=_resolve_key(new.api_key, cur.api_key),
+            api_key=_prepare_outbound_api_key(
+                new.api_key, new.provider, new.base_url, "embedding"
+            ),
             base_url=new.base_url,
             dim=new.dim,
         )
 
-    consultation = _update_endpoint(body.consultation, current.consultation)
-    knowledge = _update_endpoint(body.knowledge, current.knowledge)
-    vision = _update_endpoint(body.vision, current.vision)
+    consultation = _update_endpoint(
+        body.consultation, current.consultation, "consultation"
+    )
+    knowledge = _update_endpoint(body.knowledge, current.knowledge, "knowledge")
+    vision = _update_endpoint(body.vision, current.vision, "vision")
     embedding = _update_embedding(body.embedding, current.embedding)
 
     experts = current.experts.copy()
@@ -206,10 +252,14 @@ def test_connection(body: TestRequest):
     if body.provider not in PROVIDER_REGISTRY:
         raise HTTPException(status_code=400, detail=f"不支持的 provider: {body.provider}")
 
-    api_key = body.api_key
-    if api_key and "****" in api_key:
-        current = load_llm_settings()
-        api_key = current.consultation.api_key
+    if body.credential_scope not in {"consultation", "knowledge"}:
+        raise HTTPException(status_code=400, detail="不支持的凭据范围")
+    api_key = _prepare_outbound_api_key(
+        body.api_key,
+        body.provider,
+        body.base_url,
+        body.credential_scope,
+    )
 
     kwargs = {}
     if api_key:
@@ -244,9 +294,12 @@ def test_vision_connection(body: TestRequest):
             detail=f"{spec.label} 官方 API 暂不支持图像理解",
         )
 
-    api_key = body.api_key
-    if api_key and "****" in api_key:
-        api_key = load_llm_settings().vision.api_key
+    api_key = _prepare_outbound_api_key(
+        body.api_key,
+        body.provider,
+        body.base_url,
+        "vision",
+    )
 
     kwargs = {}
     if api_key:
@@ -283,13 +336,14 @@ def test_vision_connection(body: TestRequest):
 
 @router.post("/test-embedding")
 def test_embedding_connection(body: TestRequest):
-    api_key = body.api_key
-    if api_key and "****" in api_key:
-        current = load_llm_settings()
-        api_key = current.embedding.api_key
-
     if body.provider not in PROVIDER_REGISTRY:
         raise HTTPException(status_code=400, detail="不支持的 provider")
+    api_key = _prepare_outbound_api_key(
+        body.api_key,
+        body.provider,
+        body.base_url,
+        "embedding",
+    )
     base_url = body.base_url or get_provider_base_url(body.provider)
     if not base_url:
         raise HTTPException(status_code=400, detail="需要提供 Base URL")
@@ -323,13 +377,14 @@ class ModelsRequest(BaseModel):
 
 @router.post("/models")
 def list_models(body: ModelsRequest):
-    api_key = body.api_key
-    if api_key and "****" in api_key:
-        current = load_llm_settings()
-        api_key = getattr(current, body.credential_scope).api_key
-
     if body.provider not in PROVIDER_REGISTRY:
         raise HTTPException(status_code=400, detail="不支持的 provider")
+    api_key = _prepare_outbound_api_key(
+        body.api_key,
+        body.provider,
+        body.base_url,
+        body.credential_scope,
+    )
 
     if body.provider == "anthropic":
         return _fetch_anthropic_models(api_key)
@@ -343,13 +398,14 @@ def list_models(body: ModelsRequest):
 
 @router.post("/embedding-models")
 def list_embedding_models(body: ModelsRequest):
-    api_key = body.api_key
-    if api_key and "****" in api_key:
-        current = load_llm_settings()
-        api_key = current.embedding.api_key
-
     if body.provider not in PROVIDER_REGISTRY:
         raise HTTPException(status_code=400, detail="不支持的 provider")
+    api_key = _prepare_outbound_api_key(
+        body.api_key,
+        body.provider,
+        body.base_url,
+        "embedding",
+    )
 
     if body.provider == "anthropic":
         return {"models": []}
