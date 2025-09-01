@@ -104,15 +104,14 @@ def test_run_consultation_task_publishes_events(store):
          patch("medmdt.api.deps.build_infrastructure") as mock_infra, \
          patch("medmdt.mdt.experts.factory.create_all_experts") as mock_experts, \
          patch("medmdt.mdt.moderator.Moderator") as mock_mod, \
-         patch("medmdt.mdt.graph.build_mdt_graph") as mock_graph, \
-         patch("medmdt.mdt.graph.run_consultation") as mock_run:
+         patch("medmdt.mdt.streaming.StreamingOrchestrator") as mock_orchestrator:
 
         mock_infra.return_value = {
             "settings": MagicMock(mdt_consensus_threshold=0.8),
             "llm": MagicMock(),
             "retriever": MagicMock(),
         }
-        mock_run.return_value = {
+        mock_orchestrator.return_value.run.return_value = {
             "final_report": "report",
             "discussion_rounds": [],
             "consensus": {},
@@ -127,6 +126,7 @@ def test_run_consultation_task_publishes_events(store):
     assert len(events) == 2
     assert events[0] == {"type": "status", "status": "running"}
     assert events[1] == {"type": "done", "status": "completed"}
+    assert store.get(cid)["status"] == ConsultationStatus.COMPLETED
 
     # Test failure path
     cid2 = store.create(req)
@@ -145,3 +145,4 @@ def test_run_consultation_task_publishes_events(store):
     assert events2[0] == {"type": "status", "status": "running"}
     assert events2[1] == {"type": "error", "message": "boom"}
     assert events2[2] == {"type": "done", "status": "failed"}
+    assert store.get(cid2)["status"] == ConsultationStatus.FAILED
