@@ -146,10 +146,10 @@ Replace `test_settings_requires_paddleocr_token` with:
 def test_settings_starts_without_paddleocr_token():
     settings = Settings()
 
-    assert isinstance(settings, Settings)
+    assert "paddleocr_token" not in type(settings).model_fields
 ```
 
-This records that static application settings can be created before a PaddleOCR token is configured through runtime settings.
+This records that static application settings can be created before a PaddleOCR token is configured through runtime settings, and that the token is not owned by the static settings model.
 
 - [ ] **Step 4: Remove environment side effects from the singleton test**
 
