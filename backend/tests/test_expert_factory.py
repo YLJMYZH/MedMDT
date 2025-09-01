@@ -8,6 +8,7 @@ from medmdt.mdt.experts.factory import (
     select_experts,
 )
 from medmdt.mdt.experts.base import BaseExpert
+from medmdt.config.runtime import LLMEndpoint, LLMSettings
 
 
 @pytest.fixture
@@ -70,6 +71,29 @@ def test_create_all_experts(mock_create, experts_yaml):
     assert "internist" in experts
     assert "surgeon" in experts
     assert isinstance(experts["internist"], BaseExpert)
+
+
+@patch("medmdt.mdt.experts.factory.create_chat_model")
+def test_create_all_experts_revalidates_resolved_runtime_endpoint(
+    mock_create, experts_yaml, monkeypatch
+):
+    monkeypatch.delenv("MEDMDT_ALLOWED_BASE_URL_HOSTS", raising=False)
+    runtime = LLMSettings(
+        consultation=LLMEndpoint(
+            provider="custom",
+            model="legacy-model",
+            api_key="legacy-key",
+            base_url="https://removed-expert.example/v1",
+        )
+    )
+
+    with patch(
+        "medmdt.config.runtime.load_llm_settings", return_value=runtime
+    ):
+        with pytest.raises(ValueError, match="not allowed"):
+            create_all_experts(experts_yaml)
+
+    mock_create.assert_not_called()
 
 
 def test_select_experts():

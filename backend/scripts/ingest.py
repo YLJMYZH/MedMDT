@@ -14,7 +14,17 @@ from pathlib import Path
 from medmdt.config.runtime import get_llm_kwargs, load_llm_settings
 from medmdt.config.settings import get_settings
 from medmdt.llm.errors import VisionProviderNotSupported
-from medmdt.llm.provider import create_chat_model, create_vision_model
+from medmdt.llm.http_clients import (
+    close_shared_http_clients_sync,
+    get_shared_async_http_client,
+    get_shared_http_client,
+)
+from medmdt.llm.network_policy import validate_base_url
+from medmdt.llm.provider import (
+    PROVIDER_REGISTRY,
+    create_chat_model,
+    create_vision_model,
+)
 from medmdt.knowledge.graph_store import GraphStore
 from medmdt.knowledge.vector_store import VectorStore
 from medmdt.knowledge.keyword_store import KeywordStore
@@ -28,8 +38,14 @@ SUPPORTED_EXTENSIONS = MEDICAL_FILE_EXTENSIONS
 def build_agent() -> ExtractionAgent:
     """Wire up all dependencies and return a ready-to-use ExtractionAgent."""
     settings = get_settings()
-    llm = create_chat_model(settings.default_llm_provider, settings.default_llm_model)
     runtime = load_llm_settings()
+    validate_base_url(settings.default_llm_provider, None)
+    vision_spec = PROVIDER_REGISTRY.get(runtime.vision.provider)
+    if vision_spec is None or vision_spec.vision_factory is not None:
+        validate_base_url(runtime.vision.provider, runtime.vision.base_url)
+    validate_base_url("openai", None)
+
+    llm = create_chat_model(settings.default_llm_provider, settings.default_llm_model)
     vision_llm = None
     vision_error = None
     try:
@@ -52,7 +68,11 @@ def build_agent() -> ExtractionAgent:
     def embed_fn(texts: list[str]) -> list[list[float]]:
         from langchain_openai import OpenAIEmbeddings
 
-        embeddings = OpenAIEmbeddings(model=settings.embedding_model)
+        embeddings = OpenAIEmbeddings(
+            model=settings.embedding_model,
+            http_client=get_shared_http_client(),
+            http_async_client=get_shared_async_http_client(),
+        )
         return embeddings.embed_documents(texts)
 
     return ExtractionAgent(
@@ -73,28 +93,33 @@ def run_ingest(path: str) -> list[IngestReport]:
     For a single file, processes it directly.
     For a directory, processes all files with supported extensions.
     """
-    agent = build_agent()
-    target = Path(path)
-    all_reports: list[IngestReport] = []
+    try:
+        agent = build_agent()
+        target = Path(path)
+        all_reports: list[IngestReport] = []
 
-    if target.is_file():
-        reports = agent.process_file(str(target))
-        all_reports.extend(reports)
-        _print_reports(str(target), reports)
-    elif target.is_dir():
-        files = [f for f in target.iterdir() if f.suffix.lower() in SUPPORTED_EXTENSIONS]
-        for f in sorted(files):
-            try:
-                reports = agent.process_file(str(f))
-                all_reports.extend(reports)
-                _print_reports(str(f), reports)
-            except Exception as e:
-                print(f"[ERROR] {f}: {e}")
-    else:
-        print(f"Path not found: {path}")
-        sys.exit(1)
+        if target.is_file():
+            reports = agent.process_file(str(target))
+            all_reports.extend(reports)
+            _print_reports(str(target), reports)
+        elif target.is_dir():
+            files = [
+                f for f in target.iterdir() if f.suffix.lower() in SUPPORTED_EXTENSIONS
+            ]
+            for f in sorted(files):
+                try:
+                    reports = agent.process_file(str(f))
+                    all_reports.extend(reports)
+                    _print_reports(str(f), reports)
+                except Exception as e:
+                    print(f"[ERROR] {f}: {e}")
+        else:
+            print(f"Path not found: {path}")
+            sys.exit(1)
 
-    return all_reports
+        return all_reports
+    finally:
+        close_shared_http_clients_sync()
 
 
 def _print_reports(file_path: str, reports: list[IngestReport]) -> None:

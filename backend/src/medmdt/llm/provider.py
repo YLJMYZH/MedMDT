@@ -18,7 +18,6 @@ All return a ``BaseChatModel`` so callers use the same ``.invoke()/.stream()``.
 from dataclasses import dataclass
 from typing import Callable, Literal
 
-import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -27,6 +26,10 @@ from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_community.chat_models.zhipuai import ChatZhipuAI
 
 from medmdt.llm.errors import VisionProviderNotSupported
+from medmdt.llm.http_clients import (
+    get_shared_async_http_client,
+    get_shared_http_client,
+)
 
 ModelFactory = Callable[..., BaseChatModel]
 VisionStatus = Literal["supported", "unavailable", "unknown"]
@@ -72,17 +75,17 @@ def _clamp_open_unit(t: float) -> float:
 
 def _with_redirect_safe_openai_clients(kwargs: dict) -> dict:
     params = dict(kwargs)
-    client_types = (
-        ("http_client", httpx.Client),
-        ("http_async_client", httpx.AsyncClient),
+    client_getters = (
+        ("http_client", get_shared_http_client),
+        ("http_async_client", get_shared_async_http_client),
     )
-    for key, _ in client_types:
+    for key, _ in client_getters:
         client = params.get(key)
         if client is not None and getattr(client, "follow_redirects", None) is not False:
             raise ValueError(f"{key} must disable redirects")
-    for key, client_type in client_types:
+    for key, get_client in client_getters:
         if params.get(key) is None:
-            params[key] = client_type(follow_redirects=False)
+            params[key] = get_client()
     return params
 
 

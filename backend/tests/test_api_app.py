@@ -1,4 +1,5 @@
 # tests/test_api_app.py
+import asyncio
 import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
@@ -47,3 +48,23 @@ def test_openapi_docs(client):
     assert "/health" in paths
     assert "/api/v1/consultation" in paths
     assert "/api/v1/knowledge/search" in paths
+
+
+def test_app_lifespan_closes_shared_llm_http_clients():
+    from medmdt.llm.http_clients import (
+        close_shared_http_clients,
+        get_shared_async_http_client,
+        get_shared_http_client,
+    )
+
+    asyncio.run(close_shared_http_clients())
+    sync_client = get_shared_http_client()
+    async_client = get_shared_async_http_client()
+    try:
+        with TestClient(create_app()) as client:
+            assert client.get("/health").status_code == 200
+
+        assert sync_client.is_closed
+        assert async_client.is_closed
+    finally:
+        asyncio.run(close_shared_http_clients())

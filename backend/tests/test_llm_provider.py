@@ -14,6 +14,11 @@ from medmdt.llm.provider import (
     get_provider_base_url,
     list_provider_metadata,
 )
+from medmdt.llm.http_clients import (
+    close_shared_http_clients,
+    get_shared_async_http_client,
+    get_shared_http_client,
+)
 
 
 def _assert_redirect_safe_clients(kwargs):
@@ -85,11 +90,23 @@ def test_create_custom_requires_base_url(mock_cls):
 
 @patch("medmdt.llm.provider.ChatOpenAI")
 def test_create_moonshot_uses_redirect_safe_clients(mock_cls):
-    mock_cls.return_value = MagicMock()
-    create_chat_model("moonshot", "moonshot-v1-8k", api_key="moonshot-key")
-    kwargs = mock_cls.call_args.kwargs
-    assert kwargs["base_url"] == "https://api.moonshot.cn/v1"
-    _assert_redirect_safe_clients(kwargs)
+    asyncio.run(close_shared_http_clients())
+    try:
+        mock_cls.side_effect = [RuntimeError("constructor failed"), MagicMock()]
+        with pytest.raises(RuntimeError, match="constructor failed"):
+            create_chat_model("openai", "gpt-4o")
+        failed_kwargs = mock_cls.call_args.kwargs
+
+        create_chat_model("moonshot", "moonshot-v1-8k", api_key="moonshot-key")
+        kwargs = mock_cls.call_args.kwargs
+        assert kwargs["base_url"] == "https://api.moonshot.cn/v1"
+        assert failed_kwargs["http_client"] is kwargs["http_client"]
+        assert failed_kwargs["http_async_client"] is kwargs["http_async_client"]
+        assert kwargs["http_client"] is get_shared_http_client()
+        assert kwargs["http_async_client"] is get_shared_async_http_client()
+        _assert_redirect_safe_clients(kwargs)
+    finally:
+        asyncio.run(close_shared_http_clients())
 
 
 @patch("medmdt.llm.provider.ChatOpenAI")

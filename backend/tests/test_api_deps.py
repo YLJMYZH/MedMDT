@@ -49,7 +49,7 @@ def test_build_infrastructure_keeps_running_when_legacy_vision_is_unsupported(
             provider="deepseek",
             model="deepseek-chat",
             api_key="k",
-            base_url=None,
+            base_url="https://removed-legacy.example/v1",
         ),
         embedding=SimpleNamespace(
             provider="openai",
@@ -68,6 +68,146 @@ def test_build_infrastructure_keeps_running_when_legacy_vision_is_unsupported(
 
     assert infra["vision_llm"] is None
     assert infra["vision_error"] == "DeepSeek 暂不支持图像理解"
+
+
+@pytest.mark.parametrize("stale_endpoint", ["knowledge", "vision", "embedding"])
+def test_build_infrastructure_revalidates_loaded_endpoints_before_construction(
+    stale_endpoint, monkeypatch
+):
+    from medmdt.api.deps import build_infrastructure
+
+    monkeypatch.delenv("MEDMDT_ALLOWED_BASE_URL_HOSTS", raising=False)
+    endpoints = {
+        "knowledge": SimpleNamespace(
+            provider="openai", model="text", api_key="k", base_url=None
+        ),
+        "vision": SimpleNamespace(
+            provider="qwen", model="vision", api_key="k", base_url=None
+        ),
+        "embedding": SimpleNamespace(
+            provider="openai", model="embed", api_key="k", base_url=None, dim=3
+        ),
+    }
+    endpoints[stale_endpoint] = SimpleNamespace(
+        provider="custom",
+        model="stale",
+        api_key="k",
+        base_url="https://removed-runtime.example/v1",
+        **({"dim": 3} if stale_endpoint == "embedding" else {}),
+    )
+    runtime = SimpleNamespace(**endpoints)
+
+    with (
+        patch("medmdt.config.settings.get_settings", return_value=MagicMock()),
+        patch("medmdt.config.runtime.load_llm_settings", return_value=runtime),
+        patch("medmdt.llm.provider.create_chat_model") as chat_factory,
+        patch("medmdt.llm.provider.create_vision_model") as vision_factory,
+        patch("medmdt.knowledge.graph_store.GraphStore") as graph_cls,
+        patch("medmdt.knowledge.vector_store.VectorStore") as vector_cls,
+        patch("medmdt.knowledge.keyword_store.KeywordStore") as keyword_cls,
+        patch("medmdt.knowledge.retriever.FusionRetriever"),
+    ):
+        with pytest.raises(ValueError, match="not allowed"):
+            build_infrastructure()
+
+    chat_factory.assert_not_called()
+    vision_factory.assert_not_called()
+    graph_cls.assert_not_called()
+    vector_cls.assert_not_called()
+    keyword_cls.assert_not_called()
+
+
+def test_runtime_embeddings_borrow_shared_redirect_safe_clients():
+    from medmdt.api.deps import build_infrastructure
+    from medmdt.llm.http_clients import (
+        close_shared_http_clients,
+        get_shared_async_http_client,
+        get_shared_http_client,
+    )
+
+    runtime = SimpleNamespace(
+        knowledge=SimpleNamespace(
+            provider="openai", model="text", api_key="k", base_url=None
+        ),
+        vision=SimpleNamespace(
+            provider="qwen", model="vision", api_key="k", base_url=None
+        ),
+        embedding=SimpleNamespace(
+            provider="qwen", model="embed", api_key="k", base_url=None, dim=3
+        ),
+    )
+    settings = MagicMock(
+        neo4j_uri="bolt://test",
+        neo4j_user="neo4j",
+        neo4j_password="password",
+        milvus_host="localhost",
+        milvus_port=19530,
+        elasticsearch_url="http://localhost:9200",
+    )
+    asyncio.run(close_shared_http_clients())
+    try:
+        with (
+            patch("medmdt.config.settings.get_settings", return_value=settings),
+            patch("medmdt.config.runtime.load_llm_settings", return_value=runtime),
+            patch("medmdt.llm.provider.create_chat_model", return_value=MagicMock()),
+            patch("medmdt.llm.provider.create_vision_model", return_value=MagicMock()),
+            patch("medmdt.knowledge.graph_store.GraphStore"),
+            patch("medmdt.knowledge.vector_store.VectorStore"),
+            patch("medmdt.knowledge.keyword_store.KeywordStore"),
+            patch("medmdt.knowledge.retriever.FusionRetriever"),
+            patch("langchain_openai.OpenAIEmbeddings") as embedding_cls,
+        ):
+            infra = build_infrastructure()
+            infra["embed_fn"](["document"])
+
+        kwargs = embedding_cls.call_args.kwargs
+        assert kwargs["http_client"] is get_shared_http_client()
+        assert kwargs["http_async_client"] is get_shared_async_http_client()
+        assert kwargs["http_client"].follow_redirects is False
+        assert kwargs["http_async_client"].follow_redirects is False
+        assert kwargs["openai_api_base"] == (
+            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
+    finally:
+        asyncio.run(close_shared_http_clients())
+
+
+def test_runtime_embedding_revalidates_allowlist_at_deferred_construction(
+    monkeypatch,
+):
+    from medmdt.api.deps import build_infrastructure
+
+    base_url = "https://runtime-embedding.example/v1"
+    monkeypatch.setenv("MEDMDT_ALLOWED_BASE_URL_HOSTS", "runtime-embedding.example")
+    runtime = SimpleNamespace(
+        knowledge=SimpleNamespace(
+            provider="openai", model="text", api_key="k", base_url=None
+        ),
+        vision=SimpleNamespace(
+            provider="qwen", model="vision", api_key="k", base_url=None
+        ),
+        embedding=SimpleNamespace(
+            provider="custom", model="embed", api_key="k", base_url=base_url, dim=3
+        ),
+    )
+
+    with (
+        patch("medmdt.config.settings.get_settings", return_value=MagicMock()),
+        patch("medmdt.config.runtime.load_llm_settings", return_value=runtime),
+        patch("medmdt.llm.provider.create_chat_model", return_value=MagicMock()),
+        patch("medmdt.llm.provider.create_vision_model", return_value=MagicMock()),
+        patch("medmdt.knowledge.graph_store.GraphStore"),
+        patch("medmdt.knowledge.vector_store.VectorStore"),
+        patch("medmdt.knowledge.keyword_store.KeywordStore"),
+        patch("medmdt.knowledge.retriever.FusionRetriever"),
+        patch("langchain_openai.OpenAIEmbeddings") as embedding_cls,
+    ):
+        infra = build_infrastructure()
+        monkeypatch.delenv("MEDMDT_ALLOWED_BASE_URL_HOSTS")
+        with pytest.raises(ValueError, match="not allowed"):
+            infra["embed_fn"](["document"])
+
+    embedding_cls.assert_not_called()
 
 
 @patch("medmdt.config.settings.get_settings")

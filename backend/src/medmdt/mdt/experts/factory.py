@@ -5,6 +5,7 @@ import yaml
 from pydantic import BaseModel, Field
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
+from medmdt.llm.network_policy import validate_base_url
 from medmdt.llm.provider import create_chat_model
 from medmdt.mdt.experts.base import BaseExpert
 
@@ -43,6 +44,7 @@ def load_expert_configs(yaml_path: str) -> list[ExpertConfig]:
 
 
 def create_expert(config: ExpertConfig, **llm_kwargs) -> BaseExpert:
+    validate_base_url(config.llm_provider, llm_kwargs.get("base_url"))
     llm = create_chat_model(config.llm_provider, config.llm_model, **llm_kwargs)
     return BaseExpert(
         expert_id=config.expert_id,

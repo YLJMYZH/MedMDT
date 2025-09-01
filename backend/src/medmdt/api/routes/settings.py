@@ -18,7 +18,10 @@ from medmdt.config.runtime import (
     mask_api_key,
 )
 from medmdt.extractor.parsers.image_parser import ImageParser
-from medmdt.api.outbound import canonical_effective_base_url, validate_user_base_url
+from medmdt.llm.network_policy import (
+    canonical_effective_base_url,
+    validate_user_base_url,
+)
 from medmdt.llm.errors import VisionError
 from medmdt.llm.provider import (
     PROVIDER_REGISTRY,

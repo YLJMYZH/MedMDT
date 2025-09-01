@@ -16,7 +16,13 @@ def build_infrastructure() -> dict:
     """
     from medmdt.config.settings import get_settings
     from medmdt.llm.errors import VisionProviderNotSupported
-    from medmdt.llm.provider import create_chat_model, create_vision_model
+    from medmdt.llm.network_policy import validate_base_url
+    from medmdt.llm.provider import (
+        PROVIDER_REGISTRY,
+        create_chat_model,
+        create_vision_model,
+        get_provider_base_url,
+    )
     from medmdt.knowledge.graph_store import GraphStore
     from medmdt.knowledge.vector_store import VectorStore
     from medmdt.knowledge.keyword_store import KeywordStore
@@ -28,13 +34,22 @@ def build_infrastructure() -> dict:
     runtime = load_llm_settings()
 
     knowledge_ep = runtime.knowledge
+    vision_ep = runtime.vision
+    embed_ep = runtime.embedding
+
+    validate_base_url(knowledge_ep.provider, knowledge_ep.base_url)
+    vision_spec = PROVIDER_REGISTRY.get(vision_ep.provider)
+    if vision_spec is None or vision_spec.vision_factory is not None:
+        validate_base_url(vision_ep.provider, vision_ep.base_url)
+    embedding_provider = embed_ep.provider or "openai"
+    validate_base_url(embedding_provider, embed_ep.base_url)
+
     llm = create_chat_model(
         knowledge_ep.provider,
         knowledge_ep.model,
         **get_llm_kwargs(knowledge_ep),
     )
 
-    vision_ep = runtime.vision
     vision_llm = None
     vision_error = None
     try:
@@ -46,8 +61,6 @@ def build_infrastructure() -> dict:
     except VisionProviderNotSupported as exc:
         vision_error = str(exc)
 
-    embed_ep = runtime.embedding
-
     graph_store = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
     vector_store = VectorStore(
         settings.milvus_host, settings.milvus_port, "medmdt_chunks", embed_ep.dim,
@@ -57,12 +70,24 @@ def build_infrastructure() -> dict:
     embed_kwargs = {}
     if embed_ep.api_key:
         embed_kwargs["api_key"] = embed_ep.api_key
-    if embed_ep.base_url:
-        embed_kwargs["openai_api_base"] = embed_ep.base_url
+    embedding_base_url = embed_ep.base_url or get_provider_base_url(embedding_provider)
+    if embedding_base_url:
+        embed_kwargs["openai_api_base"] = embedding_base_url
 
     def embed_fn(texts):
         from langchain_openai import OpenAIEmbeddings
-        embeddings = OpenAIEmbeddings(model=embed_ep.model, **embed_kwargs)
+        from medmdt.llm.http_clients import (
+            get_shared_async_http_client,
+            get_shared_http_client,
+        )
+
+        validate_base_url(embedding_provider, embed_ep.base_url)
+        embeddings = OpenAIEmbeddings(
+            model=embed_ep.model,
+            http_client=get_shared_http_client(),
+            http_async_client=get_shared_async_http_client(),
+            **embed_kwargs,
+        )
         return embeddings.embed_documents(texts)
 
     retriever = FusionRetriever(graph_store, vector_store, keyword_store, llm, embed_fn)
