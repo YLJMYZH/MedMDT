@@ -33,6 +33,7 @@ from medmdt.llm.http_clients import (
 
 ModelFactory = Callable[..., BaseChatModel]
 VisionStatus = Literal["supported", "unavailable", "unknown"]
+EmbeddingStatus = Literal["supported", "unavailable"]
 
 
 @dataclass
@@ -57,6 +58,8 @@ class ProviderSpec:
     api_base_url: str | None = None
     needs_key: bool = True
     needs_base_url: bool = False
+    embedding_status: EmbeddingStatus = "unavailable"
+    embedding_base_url: str | None = None
 
 
 _PROVIDER_BASE_URLS = {
@@ -188,6 +191,8 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         _create_openai,
         "supported",
         api_base_url=_PROVIDER_BASE_URLS["openai"],
+        embedding_status="supported",
+        embedding_base_url=_PROVIDER_BASE_URLS["openai"],
     ),
     "anthropic": ProviderSpec(
         "anthropic", "Anthropic", _create_anthropic, _create_anthropic, "supported"
@@ -207,6 +212,8 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         lambda m, t, **kw: _create_compatible_vision("qwen", m, t, **kw),
         "supported",
         api_base_url=_PROVIDER_BASE_URLS["qwen"],
+        embedding_status="supported",
+        embedding_base_url=_PROVIDER_BASE_URLS["qwen"],
     ),
     "zhipu": ProviderSpec(
         "zhipu",
@@ -215,6 +222,8 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         lambda m, t, **kw: _create_compatible_vision("zhipu", m, t, **kw),
         "supported",
         api_base_url=_PROVIDER_BASE_URLS["zhipu"],
+        embedding_status="supported",
+        embedding_base_url=_PROVIDER_BASE_URLS["zhipu"],
     ),
     "moonshot": ProviderSpec(
         "moonshot",
@@ -231,6 +240,7 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         lambda m, t, **kw: _create_compatible_vision("custom", m, t, **kw),
         "unknown",
         needs_base_url=True,
+        embedding_status="supported",
     ),
 }
 
@@ -279,6 +289,22 @@ def get_provider_base_url(provider: str) -> str | None:
     return _get_provider(provider).api_base_url
 
 
+def get_embedding_base_url(provider: str, base_url: str | None = None) -> str:
+    """Return the explicit effective target for a supported embedding provider."""
+    spec = _get_provider(provider)
+    if spec.embedding_status != "supported":
+        raise ValueError(f"embedding provider {provider} is unavailable")
+    if provider == "custom":
+        if not base_url:
+            raise ValueError("Custom embedding provider requires base_url")
+        return base_url
+    if base_url:
+        return base_url
+    if spec.embedding_base_url is None:
+        raise ValueError(f"embedding provider {provider} has no trusted Base URL")
+    return spec.embedding_base_url
+
+
 def list_provider_metadata() -> list[dict[str, object]]:
     return [
         {
@@ -287,6 +313,7 @@ def list_provider_metadata() -> list[dict[str, object]]:
             "needs_key": spec.needs_key,
             "needs_base_url": spec.needs_base_url,
             "vision_status": spec.vision_status,
+            "embedding_status": spec.embedding_status,
         }
         for spec in PROVIDER_REGISTRY.values()
     ]

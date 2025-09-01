@@ -137,6 +137,13 @@ def get_llm_kwargs(endpoint: LLMEndpoint) -> dict:
 def get_expert_endpoint(settings: LLMSettings, expert_id: str) -> LLMEndpoint:
     ecfg = settings.experts.get(expert_id)
     if ecfg and ecfg.provider and ecfg.model:
+        if ecfg.provider != settings.consultation.provider:
+            if ecfg.provider == "custom":
+                raise ValueError("Custom expert requires an explicitly bound target")
+            return LLMEndpoint(
+                provider=ecfg.provider,
+                model=ecfg.model,
+            )
         return LLMEndpoint(
             provider=ecfg.provider,
             model=ecfg.model,

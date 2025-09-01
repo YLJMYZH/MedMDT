@@ -21,7 +21,7 @@ def build_infrastructure() -> dict:
         PROVIDER_REGISTRY,
         create_chat_model,
         create_vision_model,
-        get_provider_base_url,
+        get_embedding_base_url,
     )
     from medmdt.knowledge.graph_store import GraphStore
     from medmdt.knowledge.vector_store import VectorStore
@@ -42,7 +42,11 @@ def build_infrastructure() -> dict:
     if vision_spec is None or vision_spec.vision_factory is not None:
         validate_base_url(vision_ep.provider, vision_ep.base_url)
     embedding_provider = embed_ep.provider or "openai"
-    validate_base_url(embedding_provider, embed_ep.base_url)
+    embedding_base_url = get_embedding_base_url(
+        embedding_provider,
+        embed_ep.base_url,
+    )
+    validate_base_url(embedding_provider, embedding_base_url)
 
     llm = create_chat_model(
         knowledge_ep.provider,
@@ -70,7 +74,6 @@ def build_infrastructure() -> dict:
     embed_kwargs = {}
     if embed_ep.api_key:
         embed_kwargs["api_key"] = embed_ep.api_key
-    embedding_base_url = embed_ep.base_url or get_provider_base_url(embedding_provider)
     if embedding_base_url:
         embed_kwargs["openai_api_base"] = embedding_base_url
 
@@ -81,7 +84,12 @@ def build_infrastructure() -> dict:
             get_shared_http_client,
         )
 
-        validate_base_url(embedding_provider, embed_ep.base_url)
+        current_embedding_base_url = get_embedding_base_url(
+            embedding_provider,
+            embed_ep.base_url,
+        )
+        validate_base_url(embedding_provider, current_embedding_base_url)
+        embed_kwargs["openai_api_base"] = current_embedding_base_url
         embeddings = OpenAIEmbeddings(
             model=embed_ep.model,
             http_client=get_shared_http_client(),

@@ -196,4 +196,11 @@ def test_provider_metadata_and_base_urls_come_from_registry():
     metadata = {item["key"]: item for item in list_provider_metadata()}
     assert metadata["deepseek"]["vision_status"] == "unavailable"
     assert metadata["custom"]["vision_status"] == "unknown"
+    assert metadata["openai"]["embedding_status"] == "supported"
+    assert metadata["qwen"]["embedding_status"] == "supported"
+    assert metadata["zhipu"]["embedding_status"] == "supported"
+    assert metadata["custom"]["embedding_status"] == "supported"
+    assert metadata["anthropic"]["embedding_status"] == "unavailable"
+    assert metadata["deepseek"]["embedding_status"] == "unavailable"
+    assert metadata["moonshot"]["embedding_status"] == "unavailable"
     assert get_provider_base_url("qwen") == "https://dashscope.aliyuncs.com/compatible-mode/v1"

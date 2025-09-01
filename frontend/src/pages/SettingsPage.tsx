@@ -316,6 +316,7 @@ function EmbeddingSection({
 
   const currentProvider = providers.find(p => p.key === provider)
   const needsBaseUrl = currentProvider?.needs_base_url ?? false
+  const embeddingUnavailable = currentProvider?.embedding_status === 'unavailable'
 
   const fetchModels = useCallback(async (p: string, key: string, url: string) => {
     if (!p) {
@@ -391,7 +392,13 @@ function EmbeddingSection({
         >
           <option value="" disabled>请选择</option>
           {providers.map(p => (
-            <option key={p.key} value={p.key}>{p.label}</option>
+            <option
+              key={p.key}
+              value={p.key}
+              disabled={p.embedding_status === 'unavailable'}
+            >
+              {p.label}{p.embedding_status === 'unavailable' ? '（不支持向量）' : ''}
+            </option>
           ))}
         </select>
       </div>
@@ -423,7 +430,7 @@ function EmbeddingSection({
           <button
             type="button"
             onClick={() => fetchModels(provider, apiKey, baseUrl)}
-            disabled={loadingModels}
+            disabled={loadingModels || embeddingUnavailable}
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             title="刷新模型列表"
           >
@@ -461,10 +468,10 @@ function EmbeddingSection({
       </div>
 
       <div className="flex gap-3 pt-2">
-        <Button onClick={handleTest} disabled={testing} variant="outline">
+        <Button onClick={handleTest} disabled={testing || embeddingUnavailable} variant="outline">
           {testing ? '测试中...' : '测试连接'}
         </Button>
-        <Button onClick={handleSave} disabled={saving}>
+        <Button onClick={handleSave} disabled={saving || embeddingUnavailable}>
           {saving ? '保存中...' : '保存'}
         </Button>
       </div>
@@ -544,7 +551,7 @@ function ConsultationCard({
             </button>
           </div>
           <CardTitle className="text-lg">专家模型单独配置</CardTitle>
-          <p className="text-sm text-muted-foreground">为每位专家单独配置模型，API Key 继承会诊配置</p>
+          <p className="text-sm text-muted-foreground">仅同 Provider 专家继承会诊 API Key；跨 Provider 专家需配置对应服务端环境凭据</p>
         </CardHeader>
         <CardContent className="space-y-4">
           {expertIds.map(eid => {

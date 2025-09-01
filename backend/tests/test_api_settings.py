@@ -37,6 +37,8 @@ def test_settings_provider_metadata_includes_vision_status():
     providers = {item["key"]: item for item in response.json()["providers"]}
     assert providers["deepseek"]["vision_status"] == "unavailable"
     assert providers["custom"]["vision_status"] == "unknown"
+    assert providers["openai"]["embedding_status"] == "supported"
+    assert providers["anthropic"]["embedding_status"] == "unavailable"
 
 
 def test_cannot_save_new_deepseek_vision_configuration():

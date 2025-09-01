@@ -129,6 +129,7 @@ export interface SaveToKnowledgeResponse {
 }
 
 export type VisionStatus = 'supported' | 'unavailable' | 'unknown'
+export type EmbeddingStatus = 'supported' | 'unavailable'
 
 export interface ProviderInfo {
   key: string
@@ -136,6 +137,7 @@ export interface ProviderInfo {
   needs_key: boolean
   needs_base_url?: boolean
   vision_status: VisionStatus
+  embedding_status: EmbeddingStatus
 }
 
 export interface EndpointData {

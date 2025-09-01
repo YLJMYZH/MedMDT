@@ -6,6 +6,7 @@ const consultation = readFileSync(
   'utf8',
 )
 const api = readFileSync(new URL('../src/lib/api.ts', import.meta.url), 'utf8')
+const types = readFileSync(new URL('../src/lib/types.ts', import.meta.url), 'utf8')
 
 const checks = [
   ['typed LLM credential scope prop', settings.includes("credentialScope: 'consultation' | 'knowledge' | 'vision'")],
@@ -30,6 +31,10 @@ const checks = [
   ['LLM provider change clears API key', settings.includes("setApiKey('')")],
   ['provider refresh does not reuse prior key', settings.includes("fetchModels(p, '', normalizedBaseUrl)")],
   ['embedding provider refresh does not reuse prior key', settings.includes("fetchModels(p, '', normalizedBaseUrl)") && settings.match(/setApiKey\(''\)/g)?.length >= 2],
+  ['typed embedding capability metadata', types.includes('embedding_status: EmbeddingStatus')],
+  ['unsupported embedding providers are disabled', settings.includes("disabled={p.embedding_status === 'unavailable'}")],
+  ['unsupported embedding providers are annotated', settings.includes("（不支持向量）")],
+  ['expert credential inheritance help is aligned', settings.includes('仅同 Provider 专家继承会诊 API Key；跨 Provider 专家需配置对应服务端环境凭据')],
   ['consultation accepts WebP', consultation.includes('.webp')],
   ['consultation accepts GIF', consultation.includes('.gif')],
   ['consultation copy mentions WebP', consultation.includes('WEBP')],

@@ -159,6 +159,7 @@ def test_cli_embeddings_borrow_shared_redirect_safe_clients(
         assert kwargs["http_async_client"] is get_shared_async_http_client()
         assert kwargs["http_client"].follow_redirects is False
         assert kwargs["http_async_client"].follow_redirects is False
+        assert kwargs["openai_api_base"] == "https://api.openai.com/v1"
     finally:
         asyncio.run(close_shared_http_clients())
 

@@ -1,5 +1,5 @@
 # tests/test_expert_factory.py
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, call, patch
 import json
 import pytest
 import yaml
@@ -8,7 +8,12 @@ from medmdt.mdt.experts.factory import (
     select_experts,
 )
 from medmdt.mdt.experts.base import BaseExpert
-from medmdt.config.runtime import LLMEndpoint, LLMSettings
+from medmdt.config.runtime import (
+    ExpertLLM,
+    LLMEndpoint,
+    LLMSettings,
+    get_expert_endpoint,
+)
 
 
 @pytest.fixture
@@ -94,6 +99,85 @@ def test_create_all_experts_revalidates_resolved_runtime_endpoint(
             create_all_experts(experts_yaml)
 
     mock_create.assert_not_called()
+
+
+def test_same_provider_expert_inherits_consultation_credentials_and_target():
+    settings = LLMSettings(
+        consultation=LLMEndpoint(
+            provider="qwen",
+            model="qwen-plus",
+            api_key="consultation-key",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+        experts={
+            "internist": ExpertLLM(provider="qwen", model="qwen-max"),
+        },
+    )
+
+    endpoint = get_expert_endpoint(settings, "internist")
+
+    assert endpoint.provider == "qwen"
+    assert endpoint.model == "qwen-max"
+    assert endpoint.api_key == "consultation-key"
+    assert endpoint.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
+def test_cross_provider_expert_uses_no_consultation_credentials_or_target():
+    settings = LLMSettings(
+        consultation=LLMEndpoint(
+            provider="openai",
+            model="gpt-4o",
+            api_key="consultation-key",
+            base_url="https://api.openai.com/v1",
+        ),
+        experts={
+            "internist": ExpertLLM(provider="qwen", model="qwen-max"),
+        },
+    )
+
+    endpoint = get_expert_endpoint(settings, "internist")
+
+    assert endpoint.provider == "qwen"
+    assert endpoint.model == "qwen-max"
+    assert endpoint.api_key is None
+    assert endpoint.base_url is None
+
+
+def test_cross_provider_custom_expert_without_bound_target_fails_closed():
+    settings = LLMSettings(
+        consultation=LLMEndpoint(
+            provider="openai", model="gpt-4o", api_key="consultation-key"
+        ),
+        experts={
+            "internist": ExpertLLM(provider="custom", model="custom-model"),
+        },
+    )
+
+    with pytest.raises(ValueError, match="Custom expert"):
+        get_expert_endpoint(settings, "internist")
+
+
+@patch("medmdt.mdt.experts.factory.create_chat_model")
+def test_cross_provider_expert_factory_relies_on_provider_environment(
+    mock_create, experts_yaml
+):
+    runtime = LLMSettings(
+        consultation=LLMEndpoint(
+            provider="openai",
+            model="gpt-4o",
+            api_key="consultation-key",
+            base_url="https://api.openai.com/v1",
+        ),
+        experts={
+            "internist": ExpertLLM(provider="qwen", model="qwen-max"),
+        },
+    )
+    mock_create.return_value = MagicMock()
+
+    with patch("medmdt.config.runtime.load_llm_settings", return_value=runtime):
+        create_all_experts(experts_yaml)
+
+    assert mock_create.call_args_list[0] == call("qwen", "qwen-max")
 
 
 def test_select_experts():

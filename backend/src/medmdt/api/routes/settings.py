@@ -27,6 +27,7 @@ from medmdt.llm.provider import (
     PROVIDER_REGISTRY,
     create_chat_model,
     create_vision_model,
+    get_embedding_base_url,
     get_provider_base_url,
     list_provider_metadata,
 )
@@ -141,6 +142,16 @@ def get_settings():
 CredentialScope = Literal["consultation", "knowledge", "vision", "embedding"]
 
 
+def _require_embedding_base_url(provider: str, base_url: str | None) -> str:
+    try:
+        return get_embedding_base_url(provider, base_url)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="该 Provider 暂不支持向量模型或缺少有效 Base URL",
+        ) from None
+
+
 def _prepare_outbound_api_key(
     api_key: str | None,
     provider: str,
@@ -181,6 +192,12 @@ def _prepare_outbound_api_key(
 @router.put("")
 def update_settings(body: SettingsUpdate):
     current = load_llm_settings()
+
+    if body.embedding is not None:
+        _require_embedding_base_url(
+            body.embedding.provider,
+            body.embedding.base_url,
+        )
 
     if body.vision is not None:
         spec = PROVIDER_REGISTRY.get(body.vision.provider)
@@ -346,16 +363,13 @@ def test_vision_connection(body: TestRequest):
 def test_embedding_connection(body: TestRequest):
     if body.provider not in PROVIDER_REGISTRY:
         raise HTTPException(status_code=400, detail="不支持的 provider")
+    base_url = _require_embedding_base_url(body.provider, body.base_url)
     api_key = _prepare_outbound_api_key(
         body.api_key,
         body.provider,
         body.base_url,
         "embedding",
     )
-    base_url = body.base_url or get_provider_base_url(body.provider)
-    if not base_url:
-        raise HTTPException(status_code=400, detail="需要提供 Base URL")
-
     url = f"{base_url.rstrip('/')}/embeddings"
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -410,6 +424,7 @@ def list_models(body: ModelsRequest):
 def list_embedding_models(body: ModelsRequest):
     if body.provider not in PROVIDER_REGISTRY:
         raise HTTPException(status_code=400, detail="不支持的 provider")
+    base_url = _require_embedding_base_url(body.provider, body.base_url)
     api_key = _prepare_outbound_api_key(
         body.api_key,
         body.provider,
@@ -417,15 +432,8 @@ def list_embedding_models(body: ModelsRequest):
         "embedding",
     )
 
-    if body.provider == "anthropic":
-        return {"models": []}
-
     if body.provider == "qwen":
         return _fetch_dashscope_embedding_models(api_key)
-
-    base_url = body.base_url or get_provider_base_url(body.provider)
-    if not base_url:
-        raise HTTPException(status_code=400, detail="需要提供 Base URL")
 
     return _fetch_openai_compat_models(base_url, api_key)
 
