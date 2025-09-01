@@ -15,6 +15,7 @@ it directly; the rest fall back to the OpenAI-compatible ``ChatOpenAI``:
 All return a ``BaseChatModel`` so callers use the same ``.invoke()/.stream()``.
 """
 
+import os
 from dataclasses import dataclass
 from typing import Callable, Literal
 
@@ -70,10 +71,28 @@ _PROVIDER_BASE_URLS = {
     "moonshot": "https://api.moonshot.cn/v1",
 }
 
+_OPENAI_COMPAT_API_KEY_ENVS = {
+    "moonshot": "MOONSHOT_API_KEY",
+    "qwen": "DASHSCOPE_API_KEY",
+    "zhipu": "ZHIPUAI_API_KEY",
+}
+
 
 def _clamp_open_unit(t: float) -> float:
     """Clamp temperature into the open interval (0, 1) required by GLM."""
     return min(max(t, 0.01), 0.99)
+
+
+def _resolve_openai_compat_api_key(provider: str, api_key: str | None) -> str:
+    if api_key:
+        return api_key
+    env_name = _OPENAI_COMPAT_API_KEY_ENVS.get(provider)
+    if env_name is None:
+        raise ValueError(f"{provider} requires an explicit API key")
+    resolved = os.getenv(env_name)
+    if not resolved:
+        raise ValueError(f"{provider} requires {env_name}")
+    return resolved
 
 
 def _with_redirect_safe_openai_clients(kwargs: dict) -> dict:
@@ -136,31 +155,33 @@ def _create_openai_compat(
     provider: str, model: str, temperature: float, **kwargs
 ) -> BaseChatModel:
     base_url = kwargs.pop("base_url", _PROVIDER_BASE_URLS[provider])
-    api_key = kwargs.pop("api_key", None)
+    api_key = _resolve_openai_compat_api_key(
+        provider, kwargs.pop("api_key", None)
+    )
     params: dict = {
         "model": model,
         "base_url": base_url,
         "temperature": temperature,
         **kwargs,
     }
-    if api_key:
-        params["api_key"] = api_key
+    params["api_key"] = api_key
     return ChatOpenAI(**_with_redirect_safe_openai_clients(params))
 
 
 def _create_custom(model: str, temperature: float, **kwargs) -> BaseChatModel:
     base_url = kwargs.pop("base_url", None)
-    api_key = kwargs.pop("api_key", None)
     if not base_url:
         raise ValueError("Custom provider requires base_url")
+    api_key = _resolve_openai_compat_api_key(
+        "custom", kwargs.pop("api_key", None)
+    )
     params: dict = {
         "model": model,
         "base_url": base_url,
         "temperature": temperature,
         **kwargs,
     }
-    if api_key:
-        params["api_key"] = api_key
+    params["api_key"] = api_key
     return ChatOpenAI(**_with_redirect_safe_openai_clients(params))
 
 
@@ -170,7 +191,9 @@ def _create_compatible_vision(
     base_url = kwargs.pop("base_url", None) or _PROVIDER_BASE_URLS.get(provider)
     if not base_url:
         raise ValueError(f"{provider} vision provider requires base_url")
-    api_key = kwargs.pop("api_key", None)
+    api_key = _resolve_openai_compat_api_key(
+        provider, kwargs.pop("api_key", None)
+    )
     params = {
         "model": model,
         "base_url": base_url,
@@ -178,8 +201,7 @@ def _create_compatible_vision(
         **kwargs,
         "use_responses_api": False,
     }
-    if api_key:
-        params["api_key"] = api_key
+    params["api_key"] = api_key
     return ChatOpenAI(**_with_redirect_safe_openai_clients(params))
 
 

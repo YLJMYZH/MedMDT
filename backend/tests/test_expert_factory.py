@@ -180,6 +180,77 @@ def test_cross_provider_expert_factory_relies_on_provider_environment(
     assert mock_create.call_args_list[0] == call("qwen", "qwen-max")
 
 
+def test_cross_provider_moonshot_experts_bind_only_moonshot_environment_key(
+    experts_yaml, monkeypatch
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "wrong-openai-key")
+    monkeypatch.setenv("MOONSHOT_API_KEY", "moonshot-key")
+    runtime = LLMSettings(
+        consultation=LLMEndpoint(
+            provider="openai",
+            model="gpt-4o",
+            api_key="consultation-key",
+            base_url="https://api.openai.com/v1",
+        ),
+        experts={
+            "internist": ExpertLLM(provider="moonshot", model="moonshot-v1-8k"),
+            "surgeon": ExpertLLM(provider="moonshot", model="moonshot-v1-8k"),
+        },
+    )
+    sync_client = MagicMock(follow_redirects=False)
+    async_client = MagicMock(follow_redirects=False)
+
+    with (
+        patch("medmdt.config.runtime.load_llm_settings", return_value=runtime),
+        patch("medmdt.llm.provider.ChatOpenAI", return_value=MagicMock()) as chat_cls,
+        patch(
+            "medmdt.llm.provider.get_shared_http_client",
+            return_value=sync_client,
+        ),
+        patch(
+            "medmdt.llm.provider.get_shared_async_http_client",
+            return_value=async_client,
+        ),
+    ):
+        create_all_experts(experts_yaml)
+
+    assert chat_cls.call_count == 2
+    for model_call in chat_cls.call_args_list:
+        assert model_call.kwargs["api_key"] == "moonshot-key"
+        assert model_call.kwargs["base_url"] == "https://api.moonshot.cn/v1"
+
+
+def test_cross_provider_moonshot_rejects_openai_key_before_client_construction(
+    experts_yaml, monkeypatch
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "wrong-openai-key")
+    monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
+    runtime = LLMSettings(
+        consultation=LLMEndpoint(
+            provider="openai",
+            model="gpt-4o",
+            api_key="consultation-key",
+            base_url="https://api.openai.com/v1",
+        ),
+        experts={
+            "internist": ExpertLLM(provider="moonshot", model="moonshot-v1-8k"),
+        },
+    )
+
+    with (
+        patch("medmdt.config.runtime.load_llm_settings", return_value=runtime),
+        patch("medmdt.llm.provider.ChatOpenAI") as chat_cls,
+        patch("medmdt.llm.provider.get_shared_http_client") as sync_client,
+        patch("medmdt.llm.provider.get_shared_async_http_client") as async_client,
+    ):
+        with pytest.raises(ValueError, match="MOONSHOT_API_KEY"):
+            create_all_experts(experts_yaml)
+
+    chat_cls.assert_not_called()
+    sync_client.assert_not_called()
+    async_client.assert_not_called()
+
+
 def test_select_experts():
     mock_llm = MagicMock()
     response = MagicMock()

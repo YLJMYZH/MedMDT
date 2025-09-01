@@ -160,6 +160,49 @@ def test_compatible_vision_routes_use_chat_completions(
     _assert_redirect_safe_clients(kwargs)
 
 
+@pytest.mark.parametrize(
+    ("provider", "key_env"),
+    [
+        ("qwen", "DASHSCOPE_API_KEY"),
+        ("zhipu", "ZHIPUAI_API_KEY"),
+        ("moonshot", "MOONSHOT_API_KEY"),
+    ],
+)
+@patch("medmdt.llm.provider.ChatOpenAI")
+def test_compatible_vision_binds_only_provider_environment_key(
+    mock_cls, provider, key_env, monkeypatch
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "wrong-openai-key")
+    monkeypatch.setenv(key_env, f"{provider}-key")
+    mock_cls.return_value = MagicMock()
+
+    create_vision_model(provider, "vision-model", api_key=None)
+
+    kwargs = mock_cls.call_args.kwargs
+    assert kwargs["api_key"] == f"{provider}-key"
+    _assert_redirect_safe_clients(kwargs)
+
+
+@pytest.mark.parametrize("mode", ["chat", "vision"])
+def test_custom_compatible_models_reject_openai_environment_key_before_clients(
+    mode, monkeypatch
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "wrong-openai-key")
+    factory = create_chat_model if mode == "chat" else create_vision_model
+
+    with (
+        patch("medmdt.llm.provider.ChatOpenAI") as chat_cls,
+        patch("medmdt.llm.provider.get_shared_http_client") as sync_client,
+        patch("medmdt.llm.provider.get_shared_async_http_client") as async_client,
+    ):
+        with pytest.raises(ValueError, match="explicit API key"):
+            factory("custom", "custom-model", base_url="https://custom.example/v1")
+
+    chat_cls.assert_not_called()
+    sync_client.assert_not_called()
+    async_client.assert_not_called()
+
+
 @patch("medmdt.llm.provider.ChatOpenAI")
 def test_compatible_vision_cannot_override_chat_completions_mode(mock_cls):
     mock_cls.return_value = MagicMock()

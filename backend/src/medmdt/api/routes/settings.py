@@ -191,8 +191,6 @@ def _prepare_outbound_api_key(
 
 @router.put("")
 def update_settings(body: SettingsUpdate):
-    current = load_llm_settings()
-
     if body.embedding is not None:
         _require_embedding_base_url(
             body.embedding.provider,
@@ -212,6 +210,8 @@ def update_settings(body: SettingsUpdate):
             )
         if spec.needs_base_url and not (body.vision.base_url or "").strip():
             raise HTTPException(status_code=400, detail="视觉 Provider 需要提供 Base URL")
+
+    current = load_llm_settings()
 
     def _update_endpoint(
         new: EndpointData | None,

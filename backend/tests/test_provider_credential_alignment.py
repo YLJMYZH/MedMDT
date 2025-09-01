@@ -12,6 +12,7 @@ from medmdt.api.app import create_app
 )
 def test_unsupported_embedding_provider_fails_before_key_or_outbound_use(provider):
     downstream_patches = [
+        patch("medmdt.api.routes.settings.load_llm_settings"),
         patch("medmdt.api.routes.settings.save_llm_settings"),
         patch("medmdt.api.routes.settings.http_requests.post"),
         patch("medmdt.api.routes.settings.http_requests.get"),
@@ -28,7 +29,7 @@ def test_unsupported_embedding_provider_fails_before_key_or_outbound_use(provide
                     "embedding": {
                         "provider": provider,
                         "model": "embed",
-                        "api_key": "unsupported-secret",
+                        "api_key": "fake****masked",
                         "dim": 3,
                     }
                 },
@@ -38,14 +39,14 @@ def test_unsupported_embedding_provider_fails_before_key_or_outbound_use(provide
                 json={
                     "provider": provider,
                     "model": "embed",
-                    "api_key": "unsupported-secret",
+                    "api_key": "fake****masked",
                 },
             ),
             client.post(
                 "/api/v1/settings/embedding-models",
                 json={
                     "provider": provider,
-                    "api_key": "unsupported-secret",
+                    "api_key": "fake****masked",
                 },
             ),
         ]
