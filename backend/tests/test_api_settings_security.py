@@ -1,5 +1,4 @@
-import socket
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,14 +7,11 @@ from medmdt.api.app import create_app
 from medmdt.config.runtime import EmbeddingEndpoint, LLMEndpoint, LLMSettings
 
 
-PUBLIC_DNS = [
-    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
-]
-
-
 @pytest.fixture(autouse=True)
-def private_base_url_opt_in_is_disabled(monkeypatch):
+def outbound_base_url_allowlists_are_disabled(monkeypatch):
     monkeypatch.delenv("MEDMDT_ALLOW_PRIVATE_BASE_URLS", raising=False)
+    monkeypatch.delenv("MEDMDT_ALLOWED_BASE_URL_HOSTS", raising=False)
+    monkeypatch.delenv("MEDMDT_ALLOWED_BASE_URL_CIDRS", raising=False)
 
 
 def _saved_settings() -> LLMSettings:
@@ -129,7 +125,6 @@ def test_masked_saved_key_cannot_cross_endpoint_target(path, payload):
                 "medmdt.api.routes.settings.load_llm_settings",
                 return_value=_saved_settings(),
             ),
-            patch("socket.getaddrinfo", return_value=PUBLIC_DNS),
         ):
             response = TestClient(create_app()).post(path, json=payload)
     finally:
@@ -154,7 +149,6 @@ def test_masked_key_rejects_same_provider_with_different_effective_base_url():
     with (
         patch("medmdt.api.routes.settings.load_llm_settings", return_value=current),
         patch("medmdt.api.routes.settings.create_chat_model") as factory,
-        patch("socket.getaddrinfo", return_value=PUBLIC_DNS),
     ):
         response = TestClient(create_app()).post(
             "/api/v1/settings/test",
@@ -242,7 +236,6 @@ def test_settings_save_cannot_rebind_masked_key(scope, payload):
             return_value=_saved_settings(),
         ),
         patch("medmdt.api.routes.settings.save_llm_settings") as save,
-        patch("socket.getaddrinfo", return_value=PUBLIC_DNS),
     ):
         response = TestClient(create_app()).put(
             "/api/v1/settings", json={scope: payload}
@@ -254,27 +247,24 @@ def test_settings_save_cannot_rebind_masked_key(scope, payload):
 
 
 @pytest.mark.parametrize(
-    "base_url",
+    ("provider", "base_url"),
     [
-        "ftp://example.com/v1",
-        "http://user:password@example.com/v1",
-        "http://127.0.0.1/v1",
-        "http://10.0.0.1/v1",
-        "http://169.254.169.254/latest",
-        "http://0.0.0.0/v1",
-        "http://224.0.0.1/v1",
-        "http://192.0.2.1/v1",
-        "http://[::1]/v1",
+        ("custom", "ftp://example.com/v1"),
+        ("custom", "https://user:password@example.com/v1"),
+        ("custom", "https://example.com/v1?target=private"),
+        ("custom", "https://example.com/v1#fragment"),
+        ("custom", "https://example.com:99999/v1"),
+        ("custom", "http://93.184.216.34/v1"),
+        ("custom", "https://169.254.169.254/latest"),
+        ("custom", "https://224.0.0.1/v1"),
+        ("openai", "https://93.184.216.34/v1"),
     ],
 )
-def test_unsafe_user_base_url_is_rejected_without_outbound_call(base_url):
-    with (
-        patch("medmdt.api.routes.settings._fetch_openai_compat_models") as fetch,
-        patch("socket.getaddrinfo", return_value=PUBLIC_DNS),
-    ):
+def test_unsafe_user_base_url_is_rejected_without_outbound_call(provider, base_url):
+    with patch("medmdt.api.routes.settings._fetch_openai_compat_models") as fetch:
         response = TestClient(create_app()).post(
             "/api/v1/settings/models",
-            json={"provider": "custom", "api_key": "new-key", "base_url": base_url},
+            json={"provider": provider, "api_key": "new-key", "base_url": base_url},
         )
 
     assert response.status_code == 400
@@ -282,37 +272,30 @@ def test_unsafe_user_base_url_is_rejected_without_outbound_call(base_url):
     fetch.assert_not_called()
 
 
-def test_dns_resolution_to_private_address_is_rejected():
-    private_dns = [
-        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", 443)),
-    ]
-    with (
-        patch("socket.getaddrinfo", return_value=private_dns) as resolver,
-        patch("medmdt.api.routes.settings._fetch_openai_compat_models") as fetch,
-    ):
+def test_untrusted_custom_hostname_is_denied_without_dns_or_outbound_call():
+    with patch("medmdt.api.routes.settings._fetch_openai_compat_models") as fetch:
         response = TestClient(create_app()).post(
             "/api/v1/settings/models",
             json={
                 "provider": "custom",
                 "api_key": "new-key",
-                "base_url": "https://public-name.example/v1",
+                "base_url": "https://untrusted.example/v1",
             },
         )
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Base URL 不安全或无效"
-    resolver.assert_called_once()
     fetch.assert_not_called()
 
 
-def test_public_custom_url_is_allowed_with_mocked_dns():
-    with (
-        patch("socket.getaddrinfo", return_value=PUBLIC_DNS) as resolver,
-        patch(
-            "medmdt.api.routes.settings._fetch_openai_compat_models",
-            return_value={"models": []},
-        ) as fetch,
-    ):
+def test_exact_deployment_allowlisted_custom_hostname_is_allowed(monkeypatch):
+    monkeypatch.setenv(
+        "MEDMDT_ALLOWED_BASE_URL_HOSTS", "other.example, PUBLIC.EXAMPLE."
+    )
+    with patch(
+        "medmdt.api.routes.settings._fetch_openai_compat_models",
+        return_value={"models": []},
+    ) as fetch:
         response = TestClient(create_app()).post(
             "/api/v1/settings/models",
             json={
@@ -321,22 +304,46 @@ def test_public_custom_url_is_allowed_with_mocked_dns():
                 "base_url": "https://public.example/v1",
             },
         )
+        insecure_response = TestClient(create_app()).post(
+            "/api/v1/settings/models",
+            json={
+                "provider": "custom",
+                "api_key": "new-key",
+                "base_url": "http://public.example/v1",
+            },
+        )
 
     assert response.status_code == 200
-    resolver.assert_called_once()
+    assert insecure_response.status_code == 400
     fetch.assert_called_once_with("https://public.example/v1", "new-key")
 
 
-def test_private_custom_url_is_allowed_only_with_explicit_opt_in(monkeypatch):
+def test_private_cidr_is_precise_and_special_ranges_remain_denied(monkeypatch):
     monkeypatch.setenv("MEDMDT_ALLOW_PRIVATE_BASE_URLS", "true")
-    with (
-        patch("socket.getaddrinfo") as resolver,
-        patch(
-            "medmdt.api.routes.settings._fetch_openai_compat_models",
-            return_value={"models": []},
-        ) as fetch,
-    ):
-        response = TestClient(create_app()).post(
+    monkeypatch.setenv("MEDMDT_ALLOWED_BASE_URL_CIDRS", "10.20.30.0/24")
+    with patch(
+        "medmdt.api.routes.settings._fetch_openai_compat_models",
+        return_value={"models": []},
+    ) as fetch:
+        allowed = TestClient(create_app()).post(
+            "/api/v1/settings/models",
+            json={
+                "provider": "custom",
+                "api_key": "new-key",
+                "base_url": "http://10.20.30.40:8080/v1",
+            },
+        )
+        outside_cidr = TestClient(create_app()).post(
+            "/api/v1/settings/models",
+            json={
+                "provider": "custom",
+                "api_key": "new-key",
+                "base_url": "http://10.20.31.40:8080/v1",
+            },
+        )
+
+        monkeypatch.setenv("MEDMDT_ALLOWED_BASE_URL_CIDRS", "127.0.0.1/32")
+        loopback = TestClient(create_app()).post(
             "/api/v1/settings/models",
             json={
                 "provider": "custom",
@@ -345,24 +352,54 @@ def test_private_custom_url_is_allowed_only_with_explicit_opt_in(monkeypatch):
             },
         )
 
-    assert response.status_code == 200
-    resolver.assert_not_called()
-    fetch.assert_called_once_with("http://127.0.0.1:8080/v1", "new-key")
+        monkeypatch.setenv("MEDMDT_ALLOWED_BASE_URL_CIDRS", "0.0.0.0/0,::/0")
+        special_responses = [
+            TestClient(create_app()).post(
+                "/api/v1/settings/models",
+                json={
+                    "provider": "custom",
+                    "api_key": "new-key",
+                    "base_url": f"https://{host}/v1",
+                },
+            )
+            for host in ("0.0.0.0", "169.254.169.254", "192.0.2.1")
+        ]
+
+    assert allowed.status_code == 200
+    assert outside_cidr.status_code == 400
+    assert loopback.status_code == 200
+    assert all(response.status_code == 400 for response in special_responses)
+    assert fetch.call_args_list == [
+        call("http://10.20.30.40:8080/v1", "new-key"),
+        call("http://127.0.0.1:8080/v1", "new-key"),
+    ]
 
 
-def test_registry_default_url_bypasses_dns_validation():
-    with (
-        patch("socket.getaddrinfo") as resolver,
-        patch(
-            "medmdt.api.routes.settings._fetch_openai_compat_models",
-            return_value={"models": []},
-        ) as fetch,
-    ):
-        response = TestClient(create_app()).post(
+def test_global_literal_https_and_registry_default_are_trusted():
+    with patch(
+        "medmdt.api.routes.settings._fetch_openai_compat_models",
+        return_value={"models": []},
+    ) as fetch:
+        literal_response = TestClient(create_app()).post(
             "/api/v1/settings/models",
-            json={"provider": "openai", "api_key": "new-key"},
+            json={
+                "provider": "custom",
+                "api_key": "new-key",
+                "base_url": "https://93.184.216.34/v1",
+            },
+        )
+        registry_response = TestClient(create_app()).post(
+            "/api/v1/settings/models",
+            json={
+                "provider": "openai",
+                "api_key": "new-key",
+                "base_url": "https://api.openai.com/v1/",
+            },
         )
 
-    assert response.status_code == 200
-    resolver.assert_not_called()
-    fetch.assert_called_once_with("https://api.openai.com/v1", "new-key")
+    assert literal_response.status_code == 200
+    assert registry_response.status_code == 200
+    assert fetch.call_args_list == [
+        call("https://93.184.216.34/v1", "new-key"),
+        call("https://api.openai.com/v1/", "new-key"),
+    ]

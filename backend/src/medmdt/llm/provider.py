@@ -18,6 +18,7 @@ All return a ``BaseChatModel`` so callers use the same ``.invoke()/.stream()``.
 from dataclasses import dataclass
 from typing import Callable, Literal
 
+import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -69,8 +70,25 @@ def _clamp_open_unit(t: float) -> float:
     return min(max(t, 0.01), 0.99)
 
 
+def _with_redirect_safe_openai_clients(kwargs: dict) -> dict:
+    params = dict(kwargs)
+    client_types = (
+        ("http_client", httpx.Client),
+        ("http_async_client", httpx.AsyncClient),
+    )
+    for key, _ in client_types:
+        client = params.get(key)
+        if client is not None and getattr(client, "follow_redirects", None) is not False:
+            raise ValueError(f"{key} must disable redirects")
+    for key, client_type in client_types:
+        if params.get(key) is None:
+            params[key] = client_type(follow_redirects=False)
+    return params
+
+
 def _create_openai(model: str, temperature: float, **kwargs) -> BaseChatModel:
-    return ChatOpenAI(model=model, temperature=temperature, **kwargs)
+    params = _with_redirect_safe_openai_clients(kwargs)
+    return ChatOpenAI(model=model, temperature=temperature, **params)
 
 
 def _create_anthropic(model: str, temperature: float, **kwargs) -> BaseChatModel:
@@ -121,7 +139,7 @@ def _create_openai_compat(
     }
     if api_key:
         params["api_key"] = api_key
-    return ChatOpenAI(**params)
+    return ChatOpenAI(**_with_redirect_safe_openai_clients(params))
 
 
 def _create_custom(model: str, temperature: float, **kwargs) -> BaseChatModel:
@@ -137,7 +155,7 @@ def _create_custom(model: str, temperature: float, **kwargs) -> BaseChatModel:
     }
     if api_key:
         params["api_key"] = api_key
-    return ChatOpenAI(**params)
+    return ChatOpenAI(**_with_redirect_safe_openai_clients(params))
 
 
 def _create_compatible_vision(
@@ -156,7 +174,7 @@ def _create_compatible_vision(
     }
     if api_key:
         params["api_key"] = api_key
-    return ChatOpenAI(**params)
+    return ChatOpenAI(**_with_redirect_safe_openai_clients(params))
 
 
 PROVIDER_REGISTRY: dict[str, ProviderSpec] = {

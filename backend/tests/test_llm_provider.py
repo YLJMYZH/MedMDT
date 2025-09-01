@@ -1,6 +1,8 @@
 # tests/test_llm_provider.py
+import asyncio
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from medmdt.llm.errors import VisionProviderNotSupported
@@ -12,6 +14,17 @@ from medmdt.llm.provider import (
     get_provider_base_url,
     list_provider_metadata,
 )
+
+
+def _assert_redirect_safe_clients(kwargs):
+    sync_client = kwargs["http_client"]
+    async_client = kwargs["http_async_client"]
+    assert isinstance(sync_client, httpx.Client)
+    assert isinstance(async_client, httpx.AsyncClient)
+    assert sync_client.follow_redirects is False
+    assert async_client.follow_redirects is False
+    sync_client.close()
+    asyncio.run(async_client.aclose())
 
 
 def test_llm_config_defaults():
@@ -29,7 +42,11 @@ def test_provider_registry_has_all_providers():
 def test_create_openai_model(mock_cls):
     mock_cls.return_value = MagicMock()
     model = create_chat_model("openai", "gpt-4o")
-    mock_cls.assert_called_once_with(model="gpt-4o", temperature=0.0)
+    mock_cls.assert_called_once()
+    kwargs = mock_cls.call_args.kwargs
+    assert kwargs["model"] == "gpt-4o"
+    assert kwargs["temperature"] == 0.0
+    _assert_redirect_safe_clients(kwargs)
     assert model is mock_cls.return_value
 
 
@@ -63,6 +80,42 @@ def test_create_custom_requires_base_url(mock_cls):
     call_kwargs = mock_cls.call_args[1]
     assert call_kwargs["base_url"] == "https://my.api/v1"
     assert call_kwargs["api_key"] == "sk-test"
+    _assert_redirect_safe_clients(call_kwargs)
+
+
+@patch("medmdt.llm.provider.ChatOpenAI")
+def test_create_moonshot_uses_redirect_safe_clients(mock_cls):
+    mock_cls.return_value = MagicMock()
+    create_chat_model("moonshot", "moonshot-v1-8k", api_key="moonshot-key")
+    kwargs = mock_cls.call_args.kwargs
+    assert kwargs["base_url"] == "https://api.moonshot.cn/v1"
+    _assert_redirect_safe_clients(kwargs)
+
+
+@patch("medmdt.llm.provider.ChatOpenAI")
+def test_caller_controlled_openai_clients_are_preserved(mock_cls):
+    sync_client = httpx.Client(follow_redirects=False)
+    async_client = httpx.AsyncClient(follow_redirects=False)
+    try:
+        create_chat_model(
+            "openai",
+            "gpt-4o",
+            http_client=sync_client,
+            http_async_client=async_client,
+        )
+        kwargs = mock_cls.call_args.kwargs
+        assert kwargs["http_client"] is sync_client
+        assert kwargs["http_async_client"] is async_client
+    finally:
+        sync_client.close()
+        asyncio.run(async_client.aclose())
+
+    unsafe_client = httpx.Client(follow_redirects=True)
+    try:
+        with pytest.raises(ValueError, match="must disable redirects"):
+            create_chat_model("openai", "gpt-4o", http_client=unsafe_client)
+    finally:
+        unsafe_client.close()
 
 
 def test_create_unknown_provider_raises():
@@ -87,6 +140,7 @@ def test_compatible_vision_routes_use_chat_completions(
     kwargs = mock_cls.call_args.kwargs
     assert kwargs["base_url"] == expected_base_url
     assert kwargs["use_responses_api"] is False
+    _assert_redirect_safe_clients(kwargs)
 
 
 @patch("medmdt.llm.provider.ChatOpenAI")
@@ -98,7 +152,9 @@ def test_compatible_vision_cannot_override_chat_completions_mode(mock_cls):
         api_key="vision-key",
         use_responses_api=True,
     )
-    assert mock_cls.call_args.kwargs["use_responses_api"] is False
+    kwargs = mock_cls.call_args.kwargs
+    assert kwargs["use_responses_api"] is False
+    _assert_redirect_safe_clients(kwargs)
 
 
 @patch("medmdt.llm.provider.ChatAnthropic")

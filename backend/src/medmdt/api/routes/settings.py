@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
 
+def _reject_redirect_response(response) -> None:
+    if 300 <= response.status_code < 400:
+        raise http_requests.HTTPError("redirect response rejected")
+
+
 class EndpointData(BaseModel):
     provider: str = ""
     model: str = ""
@@ -357,7 +362,9 @@ def test_embedding_connection(body: TestRequest):
         resp = http_requests.post(
             url, headers=headers, timeout=15,
             json={"model": body.model, "input": "连接测试"},
+            allow_redirects=False,
         )
+        _reject_redirect_response(resp)
         resp.raise_for_status()
         data = resp.json().get("data", [])
         if data and "embedding" in data[0]:
@@ -431,8 +438,9 @@ def _fetch_dashscope_embedding_models(api_key: str | None) -> dict:
         while True:
             resp = http_requests.get(
                 f"https://dashscope.aliyuncs.com/api/v1/models?page_size=100&page_no={page}",
-                headers=headers, timeout=15,
+                headers=headers, timeout=15, allow_redirects=False,
             )
+            _reject_redirect_response(resp)
             resp.raise_for_status()
             output = resp.json().get("output", {})
             items = output.get("models", [])
@@ -457,7 +465,10 @@ def _fetch_openai_compat_models(base_url: str, api_key: str | None) -> dict:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     try:
-        resp = http_requests.get(url, headers=headers, timeout=10)
+        resp = http_requests.get(
+            url, headers=headers, timeout=10, allow_redirects=False
+        )
+        _reject_redirect_response(resp)
         resp.raise_for_status()
         data = resp.json().get("data", [])
         models = sorted(item["id"] for item in data if "id" in item)
@@ -475,8 +486,12 @@ def _fetch_anthropic_models(api_key: str | None) -> dict:
     }
     try:
         resp = http_requests.get(
-            "https://api.anthropic.com/v1/models", headers=headers, timeout=10,
+            "https://api.anthropic.com/v1/models",
+            headers=headers,
+            timeout=10,
+            allow_redirects=False,
         )
+        _reject_redirect_response(resp)
         resp.raise_for_status()
         data = resp.json().get("data", [])
         models = sorted(item["id"] for item in data if "id" in item)

@@ -1,5 +1,4 @@
 import io
-import socket
 import logging
 from unittest.mock import MagicMock, patch
 
@@ -191,13 +190,7 @@ def test_masked_vision_test_key_falls_back_to_saved_key(vision_factory, parser_c
         vision=LLMEndpoint(provider="qwen", api_key="saved-vision-key")
     )
 
-    public_dns = [
-        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
-    ]
-    with (
-        patch("medmdt.api.routes.settings.load_llm_settings", return_value=current),
-        patch("socket.getaddrinfo", return_value=public_dns),
-    ):
+    with patch("medmdt.api.routes.settings.load_llm_settings", return_value=current):
         response = TestClient(create_app()).post(
             "/api/v1/settings/test-vision",
             json={
@@ -353,39 +346,68 @@ def test_masked_model_listing_key_uses_endpoint_scope(fetch_models, scope, expec
         consultation=LLMEndpoint(
             provider="openai",
             api_key="consultation-secret",
-            base_url="https://models.example/v1",
         ),
         knowledge=LLMEndpoint(
             provider="openai",
             api_key="knowledge-secret",
-            base_url="https://models.example/v1",
         ),
         vision=LLMEndpoint(
             provider="openai",
             api_key="vision-secret",
-            base_url="https://models.example/v1",
         ),
     )
 
-    public_dns = [
-        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
-    ]
-    with (
-        patch("medmdt.api.routes.settings.load_llm_settings", return_value=current),
-        patch("socket.getaddrinfo", return_value=public_dns),
-    ):
+    with patch("medmdt.api.routes.settings.load_llm_settings", return_value=current):
         response = TestClient(create_app()).post(
             "/api/v1/settings/models",
             json={
                 "provider": "openai",
                 "api_key": "mask****-key",
-                "base_url": "https://models.example/v1",
                 "credential_scope": scope,
             },
         )
 
     assert response.status_code == 200
-    fetch_models.assert_called_once_with("https://models.example/v1", expected_key)
+    fetch_models.assert_called_once_with("https://api.openai.com/v1", expected_key)
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "request_method"),
+    [
+        (
+            "/api/v1/settings/test-embedding",
+            {"provider": "openai", "model": "text-embedding-3-small"},
+            "post",
+        ),
+        (
+            "/api/v1/settings/models",
+            {"provider": "openai", "api_key": "key"},
+            "get",
+        ),
+        (
+            "/api/v1/settings/models",
+            {"provider": "anthropic", "api_key": "key"},
+            "get",
+        ),
+        (
+            "/api/v1/settings/embedding-models",
+            {"provider": "qwen", "api_key": "key"},
+            "get",
+        ),
+    ],
+)
+def test_settings_http_probes_never_follow_redirects(path, payload, request_method):
+    redirect = MagicMock(status_code=302)
+    with patch(
+        f"medmdt.api.routes.settings.http_requests.{request_method}",
+        return_value=redirect,
+    ) as request:
+        response = TestClient(create_app()).post(path, json=payload)
+
+    assert response.status_code == 400
+    request.assert_called_once()
+    assert request.call_args.kwargs["allow_redirects"] is False
+    redirect.raise_for_status.assert_not_called()
 
 
 def test_model_listing_rejects_unknown_credential_scope():
