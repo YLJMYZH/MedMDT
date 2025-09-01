@@ -378,7 +378,11 @@ def test_masked_model_listing_key_uses_endpoint_scope(fetch_models, scope, expec
     [
         (
             "/api/v1/settings/test-embedding",
-            {"provider": "openai", "model": "text-embedding-3-small"},
+            {
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "key",
+            },
             "post",
         ),
         (

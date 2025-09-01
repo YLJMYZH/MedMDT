@@ -26,8 +26,11 @@ def test_build_agent_passes_independent_vision_model(
     vector_cls,
     keyword_cls,
     agent_cls,
+    monkeypatch,
 ):
     from scripts.ingest import build_agent
+
+    monkeypatch.setenv("OPENAI_API_KEY", "cli-openai-key")
 
     settings = MagicMock(
         default_llm_provider="openai",
@@ -121,6 +124,7 @@ def test_cli_embeddings_borrow_shared_redirect_safe_clients(
     vector_cls,
     keyword_cls,
     agent_cls,
+    monkeypatch,
 ):
     from medmdt.llm.http_clients import (
         close_shared_http_clients,
@@ -128,6 +132,8 @@ def test_cli_embeddings_borrow_shared_redirect_safe_clients(
         get_shared_http_client,
     )
     from scripts.ingest import build_agent
+
+    monkeypatch.setenv("OPENAI_API_KEY", "cli-openai-key")
 
     settings = MagicMock(
         default_llm_provider="openai",
@@ -160,6 +166,7 @@ def test_cli_embeddings_borrow_shared_redirect_safe_clients(
         assert kwargs["http_client"].follow_redirects is False
         assert kwargs["http_async_client"].follow_redirects is False
         assert kwargs["openai_api_base"] == "https://api.openai.com/v1"
+        assert kwargs["api_key"] == "cli-openai-key"
     finally:
         asyncio.run(close_shared_http_clients())
 

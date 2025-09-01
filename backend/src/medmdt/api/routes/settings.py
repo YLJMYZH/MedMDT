@@ -30,6 +30,7 @@ from medmdt.llm.provider import (
     get_embedding_base_url,
     get_provider_base_url,
     list_provider_metadata,
+    resolve_embedding_api_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,16 @@ def _require_embedding_base_url(provider: str, base_url: str | None) -> str:
         raise HTTPException(
             status_code=400,
             detail="该 Provider 暂不支持向量模型或缺少有效 Base URL",
+        ) from None
+
+
+def _require_embedding_api_key(provider: str, api_key: str | None) -> str:
+    try:
+        return resolve_embedding_api_key(provider, api_key)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="该 Provider 缺少有效的向量 API Key",
         ) from None
 
 
@@ -370,6 +381,7 @@ def test_embedding_connection(body: TestRequest):
         body.base_url,
         "embedding",
     )
+    api_key = _require_embedding_api_key(body.provider, api_key)
     url = f"{base_url.rstrip('/')}/embeddings"
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -431,6 +443,7 @@ def list_embedding_models(body: ModelsRequest):
         body.base_url,
         "embedding",
     )
+    api_key = _require_embedding_api_key(body.provider, api_key)
 
     if body.provider == "qwen":
         return _fetch_dashscope_embedding_models(api_key)

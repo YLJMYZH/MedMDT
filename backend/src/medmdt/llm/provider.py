@@ -77,6 +77,12 @@ _OPENAI_COMPAT_API_KEY_ENVS = {
     "zhipu": "ZHIPUAI_API_KEY",
 }
 
+_EMBEDDING_API_KEY_ENVS = {
+    "openai": "OPENAI_API_KEY",
+    "qwen": "DASHSCOPE_API_KEY",
+    "zhipu": "ZHIPUAI_API_KEY",
+}
+
 
 def _clamp_open_unit(t: float) -> float:
     """Clamp temperature into the open interval (0, 1) required by GLM."""
@@ -325,6 +331,22 @@ def get_embedding_base_url(provider: str, base_url: str | None = None) -> str:
     if spec.embedding_base_url is None:
         raise ValueError(f"embedding provider {provider} has no trusted Base URL")
     return spec.embedding_base_url
+
+
+def resolve_embedding_api_key(provider: str, api_key: str | None = None) -> str:
+    """Bind an embedding provider to its explicit or provider-specific key."""
+    spec = _get_provider(provider)
+    if spec.embedding_status != "supported":
+        raise ValueError(f"embedding provider {provider} is unavailable")
+    if api_key:
+        return api_key
+    env_name = _EMBEDDING_API_KEY_ENVS.get(provider)
+    if env_name is None:
+        raise ValueError(f"{provider} embedding API key must be explicit")
+    resolved = os.getenv(env_name)
+    if not resolved:
+        raise ValueError(f"{provider} embedding API key requires {env_name}")
+    return resolved
 
 
 def list_provider_metadata() -> list[dict[str, object]]:

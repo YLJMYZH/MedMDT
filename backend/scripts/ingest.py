@@ -25,6 +25,7 @@ from medmdt.llm.provider import (
     create_chat_model,
     create_vision_model,
     get_embedding_base_url,
+    resolve_embedding_api_key,
 )
 from medmdt.knowledge.graph_store import GraphStore
 from medmdt.knowledge.vector_store import VectorStore
@@ -46,6 +47,7 @@ def build_agent() -> ExtractionAgent:
         validate_base_url(runtime.vision.provider, runtime.vision.base_url)
     embedding_base_url = get_embedding_base_url("openai")
     validate_base_url("openai", embedding_base_url)
+    embedding_api_key = resolve_embedding_api_key("openai")
 
     llm = create_chat_model(settings.default_llm_provider, settings.default_llm_model)
     vision_llm = None
@@ -72,6 +74,7 @@ def build_agent() -> ExtractionAgent:
 
         embeddings = OpenAIEmbeddings(
             model=settings.embedding_model,
+            api_key=embedding_api_key,
             openai_api_base=embedding_base_url,
             http_client=get_shared_http_client(),
             http_async_client=get_shared_async_http_client(),

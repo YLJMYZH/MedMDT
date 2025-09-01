@@ -22,6 +22,7 @@ def build_infrastructure() -> dict:
         create_chat_model,
         create_vision_model,
         get_embedding_base_url,
+        resolve_embedding_api_key,
     )
     from medmdt.knowledge.graph_store import GraphStore
     from medmdt.knowledge.vector_store import VectorStore
@@ -47,6 +48,10 @@ def build_infrastructure() -> dict:
         embed_ep.base_url,
     )
     validate_base_url(embedding_provider, embedding_base_url)
+    embedding_api_key = resolve_embedding_api_key(
+        embedding_provider,
+        embed_ep.api_key,
+    )
 
     llm = create_chat_model(
         knowledge_ep.provider,
@@ -71,9 +76,7 @@ def build_infrastructure() -> dict:
     )
     keyword_store = KeywordStore(settings.elasticsearch_url)
 
-    embed_kwargs = {}
-    if embed_ep.api_key:
-        embed_kwargs["api_key"] = embed_ep.api_key
+    embed_kwargs = {"api_key": embedding_api_key}
     if embedding_base_url:
         embed_kwargs["openai_api_base"] = embedding_base_url
 
@@ -89,6 +92,10 @@ def build_infrastructure() -> dict:
             embed_ep.base_url,
         )
         validate_base_url(embedding_provider, current_embedding_base_url)
+        embed_kwargs["api_key"] = resolve_embedding_api_key(
+            embedding_provider,
+            embed_ep.api_key,
+        )
         embed_kwargs["openai_api_base"] = current_embedding_base_url
         embeddings = OpenAIEmbeddings(
             model=embed_ep.model,
